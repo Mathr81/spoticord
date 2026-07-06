@@ -8,7 +8,7 @@
 # as using QEMU to compile takes way too long (multiple hours)
 
 # Builder
-FROM --platform=linux/amd64 rust:1.80.1-slim AS builder
+FROM --platform=linux/amd64 rust:1.94-slim AS builder
 
 WORKDIR /app
 
