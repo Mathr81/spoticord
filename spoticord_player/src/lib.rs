@@ -5,8 +5,7 @@ use info::PlaybackInfo;
 use librespot::{
     connect::{config::ConnectConfig, spirc::Spirc},
     core::{
-        connection::AuthenticationError, http_client::HttpClientError, Session as SpotifySession,
-        SessionConfig,
+        error::ErrorKind, http_client::HttpClientError, Session as SpotifySession, SessionConfig,
     },
     discovery::Credentials,
     metadata::Lyrics,
@@ -130,13 +129,11 @@ impl Player {
             {
                 Ok(spirc) => break spirc,
                 Err(why) => {
-                    // Instantly return if our credentials have expired
-                    if let Some(AuthenticationError::LoginFailed(
-                        librespot::protocol::keyexchange::ErrorCode::BadCredentials,
-                    )) = why
-                        .error
-                        .downcast_ref::<librespot::core::connection::AuthenticationError>()
-                    {
+                    // Instantly return if authentication was rejected. librespot resolves
+                    // transient AP issues (e.g. TryAnotherAP) internally, so a
+                    // PermissionDenied error surfacing here means the login itself failed
+                    // (e.g. expired or invalid credentials).
+                    if why.kind == ErrorKind::PermissionDenied {
                         return Err(why);
                     }
 

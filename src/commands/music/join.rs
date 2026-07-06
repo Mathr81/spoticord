@@ -254,6 +254,9 @@ async fn has_voice_permissions(ctx: Context<'_>, channel: ChannelId) -> Result<b
         return Ok(false);
     };
 
+    // `permissions_for_user`'s replacement (`Guild::user_permissions_in`) requires a
+    // fetched `Member`; keep the simpler, behaviour-equivalent call.
+    #[allow(deprecated)]
     let Ok(permissions) = channel.permissions_for_user(ctx, me) else {
         return Ok(false);
     };
@@ -268,6 +271,9 @@ async fn has_text_permissions(ctx: Context<'_>, channel: ChannelId) -> Result<bo
         return Ok(false);
     };
 
+    // `permissions_for_user`'s replacement (`Guild::user_permissions_in`) requires a
+    // fetched `Member`; keep the simpler, behaviour-equivalent call.
+    #[allow(deprecated)]
     let Ok(permissions) = channel.permissions_for_user(ctx, me) else {
         return Ok(false);
     };

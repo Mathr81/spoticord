@@ -7,9 +7,9 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use error::Error;
 use error::Result;
 use librespot::{
-    core::connection,
+    core::error::ErrorKind,
     discovery::Credentials,
-    protocol::{authentication::AuthenticationType, keyexchange::ErrorCode},
+    protocol::authentication::AuthenticationType,
 };
 use log::{debug, error, trace};
 use lyrics_embed::LyricsEmbed;
@@ -170,10 +170,7 @@ impl Session {
 
                     error!("Failed to create player: {why}");
 
-                    if let Some(connection::AuthenticationError::LoginFailed(
-                        ErrorCode::BadCredentials,
-                    )) = why.error.downcast_ref::<connection::AuthenticationError>()
-                    {
+                    if why.kind == ErrorKind::PermissionDenied {
                         // Authentication failed, clear tokens in database (depending on which type of auth failed)
 
                         if credentials_cached {
@@ -459,10 +456,7 @@ impl Session {
             match Player::create(credentials, self.call.clone(), device_name).await {
                 Ok(player) => player,
                 Err(why) => {
-                    if let Some(connection::AuthenticationError::LoginFailed(
-                        ErrorCode::BadCredentials,
-                    )) = why.error.downcast_ref::<connection::AuthenticationError>()
-                    {
+                    if why.kind == ErrorKind::PermissionDenied {
                         // Authentication failed, clear tokens in database (depending on which type of auth failed)
 
                         if credentials_cached {

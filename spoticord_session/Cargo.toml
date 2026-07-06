@@ -12,7 +12,7 @@ spoticord_player = { path = "../spoticord_player" }
 spoticord_utils = { path = "../spoticord_utils" }
 
 tokio = { version = "1.41.1", features = ["full"] }
-librespot = { git = "https://github.com/SpoticordMusic/librespot.git", default-features = false }
+librespot = { version = "0.5.0", default-features = false }
 serenity = "0.12.2"
 songbird = "0.6.0"
 anyhow = "1.0.93"

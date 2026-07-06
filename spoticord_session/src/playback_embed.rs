@@ -221,7 +221,7 @@ impl PlaybackEmbed {
             return;
         }
 
-        match press.data.custom_id.split('-').last() {
+        match press.data.custom_id.split('-').next_back() {
             Some("next") => player.next_track().await,
             Some("prev") => player.previous_track().await,
             Some("pause") => {
