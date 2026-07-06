@@ -14,7 +14,7 @@ spoticord_utils = { path = "../spoticord_utils" }
 tokio = { version = "1.41.1", features = ["full"] }
 librespot = { git = "https://github.com/SpoticordMusic/librespot.git", default-features = false }
 serenity = "0.12.2"
-songbird = { version = "0.4.4", features = ["simd-json"] }
+songbird = "0.6.0"
 anyhow = "1.0.93"
 log = "0.4.22"
 base64 = "0.22.1"

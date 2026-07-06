@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.0 | July 6th 2026
+
+- Updated `songbird` from 0.4.4 to 0.6.0, adding support for Discord's mandatory
+  DAVE (Audio & Video End-to-End Encryption) protocol. This is the change that
+  allows Spoticord to participate in voice calls again after Discord made DAVE
+  mandatory on March 1st 2026.
+- Removed the now-nonexistent `simd-json` feature from the `songbird` dependency
+  (its JSON backend is no longer feature-gated in 0.6.0).
+- Bumped the Docker builder image to `rust:1.94-slim` to satisfy `songbird`
+  0.6.0's minimum supported Rust version (1.83.0).
+- Bumped project MSRV to 1.83.0.
+
 ## 2.2.6 | November 13th 2024
 
 - Updated voice module to support Discord's new mandatory voice encryption
