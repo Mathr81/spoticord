@@ -25,7 +25,15 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
-      # Compile-only check that the workspace builds (verifies the songbird 0.6.0
-      # upgrade). No registry push, no cross-compilation.
-      - name: Build workspace
-        run: cargo build --workspace
+      # Build the release binary. This both verifies the workspace compiles and
+      # produces a runnable, optimized `spoticord` binary. No cross-compilation.
+      - name: Build release binary
+        run: cargo build --release --bin spoticord
+
+      # Make the compiled binary downloadable from the workflow run page.
+      - name: Upload spoticord binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: spoticord-linux-x86_64
+          path: target/release/spoticord
+          if-no-files-found: error

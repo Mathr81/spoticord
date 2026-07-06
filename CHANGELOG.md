@@ -21,6 +21,9 @@
   `PermissionDenied` error surfacing to Spoticord means the login itself failed).
 - Committed a fully crates.io-resolvable `Cargo.lock` (with `vergen` pinned to
   9.0.6 to avoid a broken `vergen`/`vergen-lib` build-script combination).
+- Added a `docker-compose.yml` and documented `.env.example` for self-hosting
+  (bot + PostgreSQL + Redis), and made the `build.yml` workflow upload the
+  compiled release binary as a downloadable artifact.
 
 ## 2.2.6 | November 13th 2024
 
