@@ -11,6 +11,16 @@
 - Bumped the Docker builder image to `rust:1.94-slim` to satisfy `songbird`
   0.6.0's minimum supported Rust version (1.83.0).
 - Bumped project MSRV to 1.83.0.
+- Switched the `librespot` dependency from the (no longer reachable)
+  `SpoticordMusic/librespot` git fork to the upstream `librespot` 0.5.0 crate
+  published on crates.io. This unblocks builds, which were failing because the
+  fork could no longer be cloned. The only source change required was replacing
+  two references to librespot's now-private `core::connection` module with a
+  check on `librespot::core::error::ErrorKind::PermissionDenied` (librespot
+  handles transient AP errors such as `TryAnotherAP` internally, so a
+  `PermissionDenied` error surfacing to Spoticord means the login itself failed).
+- Committed a fully crates.io-resolvable `Cargo.lock` (with `vergen` pinned to
+  9.0.6 to avoid a broken `vergen`/`vergen-lib` build-script combination).
 
 ## 2.2.6 | November 13th 2024
 
