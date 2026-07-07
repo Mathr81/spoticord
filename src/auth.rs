@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use librespot::{
     core::{cache::Cache, SessionConfig},
     discovery::Credentials,
+    oauth::OAuthClientBuilder,
 };
 use log::{info, warn};
 
@@ -26,7 +27,7 @@ const OAUTH_PORT: u16 = 8898;
 /// the resulting reusable credentials are saved to the cache directory by
 /// librespot the first time a session connects. Every subsequent run simply
 /// reloads them from disk — no database or account-linking frontend required.
-pub fn resolve_credentials() -> Result<(Credentials, Cache)> {
+pub async fn resolve_credentials() -> Result<(Credentials, Cache)> {
     let cache = Cache::new(Some(spoticord_config::cache_dir()), None, None, None)
         .context("failed to open the credentials cache directory")?;
 
@@ -38,11 +39,15 @@ pub fn resolve_credentials() -> Result<(Credentials, Cache)> {
     warn!("No cached Spotify credentials found, starting interactive OAuth login.");
     warn!("Open the URL printed below in a browser and approve access. This is only needed once.");
 
-    let token = librespot::oauth::get_access_token(
+    let token = OAuthClientBuilder::new(
         &SessionConfig::default().client_id,
         &format!("http://127.0.0.1:{OAUTH_PORT}/login"),
         OAUTH_SCOPES.to_vec(),
     )
+    .build()
+    .map_err(|why| anyhow::anyhow!("failed to build the Spotify OAuth client: {why}"))?
+    .get_access_token_async()
+    .await
     .map_err(|why| anyhow::anyhow!("Spotify OAuth login failed: {why}"))?;
 
     Ok((Credentials::with_access_token(token.access_token), cache))

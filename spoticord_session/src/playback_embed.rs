@@ -395,7 +395,7 @@ fn build_embed(playback_info: &PlaybackInfo, owner: &User) -> CreateEmbed {
                 format!(
                     "[{}](https://open.spotify.com/artist/{})",
                     artist.name,
-                    artist.id.to_base62().expect("invalid artist")
+                    artist.id.to_id().unwrap_or_default()
                 )
             })
             .collect::<Vec<_>>()

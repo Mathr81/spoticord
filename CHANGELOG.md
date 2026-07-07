@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.1.0 | July 7th 2026
+
+- Upgraded `librespot` from 0.5.0 to 0.8.0. 0.5.0 is too old for Spotify's
+  current backend, which caused the bot to connect and accept transport
+  controls but play no audio (upstream fixed this by switching to
+  `get_extended_metadata` for audio files, acquiring HTTP access tokens via
+  `login5`, and falling back across CDN URLs). This is the change that makes
+  playback actually work.
+- Migrated the affected API surface to librespot 0.8:
+  - `connect::{ConnectConfig, Spirc}` import paths; `ConnectConfig.initial_volume`
+    is now a plain `u16`.
+  - The mixer factory now returns a `Result`.
+  - `AudioItem.track_id` is now a `SpotifyUri` (was `SpotifyId`); handle the new
+    `UniqueFields::Local` variant and use `SpotifyUri::to_id()` for base62 ids.
+  - OAuth login moved to `OAuthClientBuilder` (the old `get_access_token` is
+    deprecated).
+- Enabled librespot's `rustls-tls-webpki-roots` feature (0.8 requires an explicit
+  TLS backend when default features are off).
+
 ## 3.0.0 | July 7th 2026
 
 Stripped Spoticord down to a **single-account, self-hostable** build for personal

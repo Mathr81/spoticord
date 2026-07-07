@@ -32,7 +32,7 @@ async fn main() {
 
     // Resolve the single Spotify account's reusable credentials (from the cache,
     // or a one-time interactive OAuth login). No database or link frontend needed.
-    let (credentials, cache) = match auth::resolve_credentials() {
+    let (credentials, cache) = match auth::resolve_credentials().await {
         Ok(result) => result,
         Err(why) => {
             error!("Failed to obtain Spotify credentials: {why:?}");
