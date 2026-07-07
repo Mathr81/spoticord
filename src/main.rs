@@ -1,3 +1,4 @@
+mod auth;
 mod bot;
 mod commands;
 
@@ -5,7 +6,6 @@ use log::{error, info};
 use poise::Framework;
 use serenity::all::ClientBuilder;
 use songbird::SerenityInit;
-use spoticord_database::Database;
 
 #[tokio::main]
 async fn main() {
@@ -30,18 +30,28 @@ async fn main() {
 
     dotenvy::dotenv().ok();
 
-    // Set up database
-    let database = match Database::connect().await {
-        Ok(db) => db,
+    // Resolve the single Spotify account's reusable credentials (from the cache,
+    // or a one-time interactive OAuth login). No database or link frontend needed.
+    let (credentials, cache) = match auth::resolve_credentials() {
+        Ok(result) => result,
         Err(why) => {
-            error!("Failed to connect to database and perform migrations: {why}");
+            error!("Failed to obtain Spotify credentials: {why:?}");
             return;
         }
     };
 
     // Set up bot
     let framework = Framework::builder()
-        .setup(|ctx, ready, framework| Box::pin(bot::setup(ctx, ready, framework, database)))
+        .setup(move |ctx, ready, framework| {
+            Box::pin(bot::setup(
+                ctx,
+                ready,
+                framework,
+                credentials,
+                cache,
+                spoticord_config::device_name(),
+            ))
+        })
         .options(bot::framework_opts())
         .build();
 

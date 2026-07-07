@@ -1,0 +1,29 @@
+# Self-hosting for the single-account (personal) build of Spoticord.
+# No database, no Redis, no spoticord-link — just the bot.
+#
+#   cp .env.example .env      # then fill in DISCORD_TOKEN
+#   docker compose up -d
+#   docker compose logs -f    # on first run, open the Spotify URL printed here
+#
+# The first launch prints a Spotify authorization URL: open it once and approve.
+# The reusable credentials are then saved to the `spoticord-data` volume, so
+# later restarts sign in automatically.
+
+services:
+  spoticord:
+    # Pulls the image published by the `build-push` workflow once this branch is
+    # merged to `main`. To build locally instead, comment out `image:` and
+    # uncomment `build:`.
+    image: ghcr.io/mathr81/spoticord:latest
+    # build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - spoticord-data:/data
+    # Only needed for the one-time OAuth login: lets you reach the redirect
+    # server the bot spins up. You can remove this after the first sign-in.
+    ports:
+      - "8898:8898"
+
+volumes:
+  spoticord-data:

@@ -1,19 +1,15 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use librespot::{core::cache::Cache, discovery::Credentials};
 use log::{debug, info};
 use poise::{serenity_prelude, Framework, FrameworkContext, FrameworkOptions};
 use serenity::all::{ActivityData, FullEvent, Ready, ShardManager};
-use spoticord_database::Database;
 use spoticord_session::manager::SessionManager;
 
 use crate::commands;
 
-#[cfg(feature = "stats")]
-use spoticord_stats::StatsManager;
-
 pub type Context<'a> = poise::Context<'a, Data, anyhow::Error>;
-pub type FrameworkError<'a> = poise::FrameworkError<'a, Data, anyhow::Error>;
 
 type Data = SessionManager;
 
@@ -22,13 +18,8 @@ pub fn framework_opts() -> FrameworkOptions<Data, anyhow::Error> {
         commands: vec![
             #[cfg(debug_assertions)]
             commands::debug::ping(),
-            #[cfg(debug_assertions)]
-            commands::debug::token(),
             commands::core::help(),
             commands::core::version(),
-            commands::core::rename(),
-            commands::core::link(),
-            commands::core::unlink(),
             commands::music::join(),
             commands::music::disconnect(),
             commands::music::stop(),
@@ -46,7 +37,9 @@ pub async fn setup(
     ctx: &serenity_prelude::Context,
     ready: &Ready,
     framework: &Framework<Data, anyhow::Error>,
-    database: Database,
+    credentials: Credentials,
+    cache: Cache,
+    device_name: &'static str,
 ) -> Result<Data> {
     info!("Successfully logged in as {}", ready.user.name);
 
@@ -65,16 +58,11 @@ pub async fn setup(
         .await
         .ok_or_else(|| anyhow!("Songbird was not registered during setup"))?;
 
-    let manager = SessionManager::new(songbird, database);
+    let manager = SessionManager::new(songbird, credentials, cache, device_name);
 
-    #[cfg(feature = "stats")]
-    let stats = StatsManager::new(spoticord_config::kv_url())?;
-
-    tokio::spawn(background_loop(
+    tokio::spawn(shutdown_handler(
         manager.clone(),
         framework.shard_manager().clone(),
-        #[cfg(feature = "stats")]
-        stats,
     ));
 
     Ok(manager)
@@ -100,49 +88,12 @@ async fn event_handler(
     Ok(())
 }
 
-async fn background_loop(
-    session_manager: SessionManager,
-    shard_manager: Arc<ShardManager>,
-    #[cfg(feature = "stats")] mut stats_manager: spoticord_stats::StatsManager,
-) {
-    #[cfg(feature = "stats")]
-    use log::error;
+/// Wait for an interrupt signal, then gracefully disconnect all sessions.
+async fn shutdown_handler(session_manager: SessionManager, shard_manager: Arc<ShardManager>) {
+    _ = tokio::signal::ctrl_c().await;
 
-    loop {
-        tokio::select! {
-            _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
-                #[cfg(feature = "stats")]
-                {
-                    debug!("Retrieving active sessions count for stats");
+    info!("Received interrupt signal, shutting down...");
 
-                    let mut count = 0;
-
-                    for session in session_manager.get_all_sessions() {
-                        if matches!(session.active().await, Ok(true)) {
-                            count += 1;
-                        }
-                    }
-
-                    if let Err(why) = stats_manager.set_active_count(count) {
-                        error!("Failed to update active sessions: {why}");
-                    } else {
-                        debug!("Active session count set to: {count}");
-                    }
-                }
-            }
-
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received interrupt signal, shutting down...");
-
-                session_manager.shutdown_all().await;
-                shard_manager.shutdown_all().await;
-
-                #[cfg(feature = "stats")]
-                stats_manager.set_active_count(0).ok();
-
-
-                break;
-            }
-        }
-    }
+    session_manager.shutdown_all().await;
+    shard_manager.shutdown_all().await;
 }

@@ -3,14 +3,9 @@ pub mod lyrics_embed;
 pub mod manager;
 pub mod playback_embed;
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use error::Error;
 use error::Result;
-use librespot::{
-    core::error::ErrorKind,
-    discovery::Credentials,
-    protocol::authentication::AuthenticationType,
-};
+use librespot::core::error::ErrorKind;
 use log::{debug, error, trace};
 use lyrics_embed::LyricsEmbed;
 use manager::{SessionManager, SessionQuery};
@@ -106,42 +101,10 @@ impl Session {
         // This uses separate channels as to not cause a cyclic dependency
         let (inner_tx, inner_rx) = mpsc::channel(16);
 
-        // Grab user credentials and info before joining call
-        let account = session_manager
-            .database()
-            .get_account(owner.to_string())
-            .await?;
-
-        // Get user preferences
-        let device_name = session_manager
-            .database()
-            .get_user(owner.to_string())
-            .await?
-            .device_name;
-
-        let credentials = match account
-            .session_token
-            .and_then(|val| BASE64.decode(&val).ok())
-        {
-            Some(token) => Credentials {
-                username: Some(account.username),
-                auth_type: AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS,
-                auth_data: token,
-            },
-            None => {
-                let access_token = session_manager
-                    .database()
-                    .get_access_token(&account.user_id)
-                    .await?;
-
-                Credentials::with_access_token(access_token)
-            }
-        };
-
-        let credentials_cached = matches!(
-            credentials.auth_type,
-            AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS
-        );
+        // Single-account credentials + cache, shared by every session.
+        let credentials = session_manager.credentials();
+        let cache = session_manager.cache();
+        let device_name = session_manager.device_name();
 
         // Hello Discord I'm here
         let call = session_manager
@@ -161,46 +124,23 @@ impl Session {
             call.add_global_event(Event::Core(CoreEvent::ClientDisconnect), handle.clone());
         }
 
-        let (player, events, auth_data) =
-            match Player::create(credentials, call.clone(), device_name).await {
-                Ok(player) => player,
-                Err(why) => {
-                    // Leave call on error, otherwise bot will be stuck in call forever until manually disconnected or taken over
-                    _ = call.lock().await.leave().await;
-
-                    error!("Failed to create player: {why}");
-
-                    if why.kind == ErrorKind::PermissionDenied {
-                        // Authentication failed, clear tokens in database (depending on which type of auth failed)
-
-                        if credentials_cached {
-                            session_manager
-                                .database()
-                                .update_session_token(owner.to_string(), None)
-                                .await
-                                .ok();
-                        } else {
-                            session_manager
-                                .database()
-                                .delete_account(owner.to_string())
-                                .await
-                                .ok();
-                        }
-
-                        return Err(AuthenticationFailed);
-                    }
-
-                    return Err(why.into());
-                }
-            };
-
-        // Store reusable credentials in DB
-        // We don't care if this fails, we'll just fall back on token login
-        session_manager
-            .database()
-            .update_session_token(owner.to_string(), Some(BASE64.encode(auth_data)))
+        let (player, events) = match Player::create(credentials, cache, call.clone(), device_name)
             .await
-            .ok();
+        {
+            Ok(player) => player,
+            Err(why) => {
+                // Leave call on error, otherwise bot will be stuck in call forever until manually disconnected or taken over
+                _ = call.lock().await.leave().await;
+
+                error!("Failed to create player: {why}");
+
+                if why.kind == ErrorKind::PermissionDenied {
+                    return Err(AuthenticationFailed);
+                }
+
+                return Err(why.into());
+            }
+        };
 
         let mut session = Self {
             session_manager,
@@ -410,81 +350,26 @@ impl Session {
     async fn reactivate(&mut self, new_owner: UserId) -> Result<()> {
         use Error::*;
 
-        let user_id = &*new_owner.to_string();
-
         if self.active {
             return Err(AlreadyActive);
         }
 
-        // Grab user credentials and info before joining call
-        let account = self.session_manager.database().get_account(user_id).await?;
+        // Single-account credentials + cache, shared by every session.
+        let credentials = self.session_manager.credentials();
+        let cache = self.session_manager.cache();
+        let device_name = self.session_manager.device_name();
 
-        // Get user preferences
-        let device_name = self
-            .session_manager
-            .database()
-            .get_user(user_id)
-            .await?
-            .device_name;
-
-        let credentials = match account
-            .session_token
-            .and_then(|val| BASE64.decode(val).ok())
-        {
-            Some(token) => Credentials {
-                username: Some(account.username),
-                auth_type: AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS,
-                auth_data: token,
-            },
-            None => {
-                let access_token = self
-                    .session_manager
-                    .database()
-                    .get_access_token(&account.user_id)
-                    .await?;
-
-                Credentials::with_access_token(access_token)
-            }
-        };
-
-        let credentials_cached = matches!(
-            credentials.auth_type,
-            AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS
-        );
-
-        let (player, player_events, auth_data) =
-            match Player::create(credentials, self.call.clone(), device_name).await {
+        let (player, player_events) =
+            match Player::create(credentials, cache, self.call.clone(), device_name).await {
                 Ok(player) => player,
                 Err(why) => {
                     if why.kind == ErrorKind::PermissionDenied {
-                        // Authentication failed, clear tokens in database (depending on which type of auth failed)
-
-                        if credentials_cached {
-                            self.session_manager
-                                .database()
-                                .update_session_token(user_id, None)
-                                .await
-                                .ok();
-                        } else {
-                            self.session_manager
-                                .database()
-                                .delete_account(user_id)
-                                .await
-                                .ok();
-                        }
+                        return Err(AuthenticationFailed);
                     }
 
                     return Err(why.into());
                 }
             };
-
-        // Store reusable credentials in DB
-        // We don't care if this fails, we'll just fall back on token login
-        self.session_manager
-            .database()
-            .update_session_token(user_id, Some(BASE64.encode(auth_data)))
-            .await
-            .ok();
 
         self.owner = new_owner;
         self.player = player;

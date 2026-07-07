@@ -4,8 +4,4 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-rspotify = { version = "0.13.3", default-features = false, features = [
-    "client-reqwest",
-    "reqwest-rustls-tls",
-] }
 serenity = "0.12.2"

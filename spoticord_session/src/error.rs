@@ -18,9 +18,6 @@ pub enum Error {
     Serenity(#[from] serenity::Error),
 
     #[error(transparent)]
-    Database(#[from] spoticord_database::error::DatabaseError),
-
-    #[error(transparent)]
     JoinError(#[from] songbird::error::JoinError),
 
     #[error(transparent)]

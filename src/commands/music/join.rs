@@ -6,7 +6,6 @@ use poise::CreateReply;
 use serenity::all::{
     Channel, ChannelId, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, UserId,
 };
-use spoticord_database::error::DatabaseError;
 use spoticord_session::manager::SessionQuery;
 use spoticord_utils::discord::Colors;
 
@@ -86,29 +85,6 @@ pub async fn join(ctx: Context<'_>) -> Result<()> {
                         .title("Cannot join voice channel")
                         .description(
                             "I do not have permissions to send messages / links in this text channel.",
-                        )
-                        .color(Colors::Error),
-                )
-                .ephemeral(true),
-        )
-        .await?;
-
-        return Ok(());
-    }
-
-    // Check whether the user has linked their Spotify account
-    if let Err(DatabaseError::NotFound) = manager
-        .database()
-        .get_account(ctx.author().id.to_string())
-        .await
-    {
-        ctx.send(
-            CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("No Spotify account")
-                        .description(
-                            "You need to link your Spotify account to Spoticord before being able to use it.\nUse the `/link` command to link your account.",
                         )
                         .color(Colors::Error),
                 )
@@ -208,7 +184,7 @@ pub async fn join(ctx: Context<'_>) -> Result<()> {
         error!("Failed to create session: {why}");
 
         let description = if matches!(why, spoticord_session::error::Error::AuthenticationFailed) {
-            "Unable to authenticate with Spotify. Did you change your password?\n\nThe broken credentials used have been deleted.\n\nYou might need to relink your account using `/link`."
+            "Unable to authenticate with Spotify. The cached credentials may have expired.\n\nRestart the bot to sign in again."
         } else {
             "An error occured whilst trying to create a session. Please try again."
         };

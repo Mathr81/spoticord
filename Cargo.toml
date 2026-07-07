@@ -1,6 +1,6 @@
 [package]
 name = "spoticord"
-version = "2.3.0"
+version = "3.0.0"
 edition = "2021"
 rust-version = "1.83.0"
 
@@ -12,24 +12,16 @@ path = "src/main.rs"
 members = [
     "spoticord_audio",
     "spoticord_config",
-    "spoticord_database",
     "spoticord_player",
     "spoticord_session",
     "spoticord_utils",
-    "spoticord_stats",
 ]
-
-[features]
-default = ["stats"]
-stats = ["spoticord_stats"]
 
 [dependencies]
 spoticord_config = { path = "./spoticord_config" }
-spoticord_database = { path = "./spoticord_database" }
 spoticord_player = { path = "./spoticord_player" }
 spoticord_session = { path = "./spoticord_session" }
 spoticord_utils = { path = "./spoticord_utils" }
-spoticord_stats = { path = "./spoticord_stats", optional = true }
 
 librespot = { version = "0.5.0", default-features = false }
 anyhow = "1.0.93"
@@ -48,4 +40,4 @@ lto = true
 strip = true
 
 [workspace.package]
-version = "2.3.0"
+version = "3.0.0"
