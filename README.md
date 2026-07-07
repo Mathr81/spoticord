@@ -1,29 +1,41 @@
-# Spoticord
+# Spoticord (personal single-account build)
 
 Spoticord is a Discord music bot that allows you to control your music using the Spotify app.
-Spoticord is built on top of [librespot](https://github.com/librespot-org/librespot) (with tiny additional changes), to allow full control using the Spotify client, with [serenity](https://github.com/serenity-rs/serenity) and [songbird](https://github.com/serenity-rs/songbird) for Discord communication.
+Spoticord is built on top of [librespot](https://github.com/librespot-org/librespot), to allow full control using the Spotify client, with [serenity](https://github.com/serenity-rs/serenity) and [songbird](https://github.com/serenity-rs/songbird) for Discord communication.
 Being built on top of rust, Spoticord is relatively lightweight and can run on low-spec hardware.
+
+> **This is a stripped-down, single-account fork.** The multi-user machinery
+> (PostgreSQL database, the `spoticord-link` account-linking frontend, Redis
+> stats) has been removed. The bot plays from **one** Spotify account, which it
+> signs into with a one-time OAuth login. Everyone in a voice channel shares
+> that account.
 
 ## How to use
 
-### Official bot
+The quickest way to run it is the bundled Docker stack:
 
-Spoticord is being hosted as an official bot. You can find more info about how to use this bot over at [the Spoticord website](https://spoticord.com/).
+```sh
+cp .env.example .env      # then fill in DISCORD_TOKEN
+docker compose up -d
+docker compose logs -f    # on the first run, open the Spotify URL printed here
+```
+
+On the **first launch** the bot has no cached credentials, so it prints a Spotify
+authorization URL. Open it once in a browser and approve access; the reusable
+credentials are then saved to the `spoticord-data` volume (the `/data` directory)
+and reused on every later start — no further login needed.
 
 ### Environment variables
 
-Spoticord uses environment variables to configure itself. The following variables are required:
+Only one variable is required:
 
 - `DISCORD_TOKEN`: The Discord bot token used for authenticating with Discord.
-- `DATABASE_URL`: The URL of the postgres database where spoticord will store user data. Currently only postgresql databases are supported.
-- `LINK_URL`: The base URL of the account-linking frontend used for authenticating users with Spotify. This base URL must point to an instance of [the Spoticord Link frontend](https://github.com/SpoticordMusic/spoticord-link).
-- `SPOTIFY_CLIENT_ID`: The Spotify Client ID for the Spotify application that is used for Spoticord. This will be used for refreshing tokens.
-- `SPOTIFY_CLIENT_SECRET`: The Spotify Client Secret for the Spotify application that is used for Spoticord. This will be used for refreshing tokens.
 
-Additionally you can configure the following variables:
+Optionally you can configure:
 
+- `DEVICE_NAME`: The Spotify Connect device name the bot advertises. Defaults to `Spoticord`.
+- `CACHE_DIR`: Directory where the reusable Spotify credentials (`credentials.json`) are stored. Defaults to `/data`.
 - `GUILD_ID`: The ID of the Discord server where this bot will create commands for. This is used during testing to prevent the bot from creating slash commands in other servers, as well as generally being faster than global command propagation. This variable is required when running a debug build, and ignored when running a release build.
-- `KV_URL`: The connection URL of a redis-server instance used for storing realtime data. This variable is required when compiling with the `stats` feature.
 
 #### Providing environment variables
 

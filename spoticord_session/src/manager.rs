@@ -1,17 +1,24 @@
 use super::{Session, SessionHandle};
 use crate::error::Result;
+use librespot::{core::cache::Cache, discovery::Credentials};
 use serenity::all::{ChannelId, GuildId, UserId};
 use songbird::Songbird;
-use spoticord_database::Database;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
+/// A single-account credential source shared by every session.
+///
+/// The reusable Spotify credentials and the librespot cache are resolved once at
+/// startup (see the bot's auth bootstrap) and handed out to each session.
 #[derive(Clone)]
 pub struct SessionManager {
     songbird: Arc<Songbird>,
-    database: Database,
+
+    credentials: Credentials,
+    cache: Cache,
+    device_name: Arc<str>,
 
     sessions: Arc<Mutex<HashMap<GuildId, SessionHandle>>>,
     owners: Arc<Mutex<HashMap<UserId, SessionHandle>>>,
@@ -23,10 +30,18 @@ pub enum SessionQuery {
 }
 
 impl SessionManager {
-    pub fn new(songbird: Arc<Songbird>, database: Database) -> Self {
+    pub fn new(
+        songbird: Arc<Songbird>,
+        credentials: Credentials,
+        cache: Cache,
+        device_name: impl Into<String>,
+    ) -> Self {
         Self {
             songbird,
-            database,
+
+            credentials,
+            cache,
+            device_name: device_name.into().into(),
 
             sessions: Arc::new(Mutex::new(HashMap::new())),
             owners: Arc::new(Mutex::new(HashMap::new())),
@@ -119,7 +134,18 @@ impl SessionManager {
         self.songbird.clone()
     }
 
-    pub fn database(&self) -> Database {
-        self.database.clone()
+    /// The reusable Spotify credentials shared by every session.
+    pub fn credentials(&self) -> Credentials {
+        self.credentials.clone()
+    }
+
+    /// The librespot cache used to persist credentials.
+    pub fn cache(&self) -> Cache {
+        self.cache.clone()
+    }
+
+    /// The Spotify Connect device name to advertise.
+    pub fn device_name(&self) -> String {
+        self.device_name.to_string()
     }
 }

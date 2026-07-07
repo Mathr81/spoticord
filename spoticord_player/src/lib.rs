@@ -5,7 +5,8 @@ use info::PlaybackInfo;
 use librespot::{
     connect::{config::ConnectConfig, spirc::Spirc},
     core::{
-        error::ErrorKind, http_client::HttpClientError, Session as SpotifySession, SessionConfig,
+        cache::Cache, error::ErrorKind, http_client::HttpClientError, Session as SpotifySession,
+        SessionConfig,
     },
     discovery::Credentials,
     metadata::Lyrics,
@@ -71,9 +72,10 @@ pub struct Player {
 impl Player {
     pub async fn create(
         credentials: Credentials,
+        cache: Cache,
         call: Arc<Mutex<Call>>,
         device_name: impl Into<String>,
-    ) -> Result<(PlayerHandle, mpsc::Receiver<PlayerEvent>, Vec<u8>), librespot::core::Error> {
+    ) -> Result<(PlayerHandle, mpsc::Receiver<PlayerEvent>), librespot::core::Error> {
         let (event_tx, event_rx) = mpsc::channel(16);
 
         let mut call_lock = call.lock().await;
@@ -87,8 +89,9 @@ impl Player {
         // Free call lock before creating session
         drop(call_lock);
 
-        // Create librespot audio streamer
-        let session = SpotifySession::new(SessionConfig::default(), None);
+        // Create librespot audio streamer. Passing the cache lets librespot persist
+        // the reusable credentials to disk, so we only need to authenticate once.
+        let session = SpotifySession::new(SessionConfig::default(), Some(cache));
         let mixer = (mixer::find(Some("softvol")).expect("missing softvol mixer"))(MixerConfig {
             volume_ctrl: VolumeCtrl::Log(VolumeCtrl::DEFAULT_DB_RANGE),
             ..Default::default()
@@ -149,8 +152,8 @@ impl Player {
             }
         };
 
-        // Keep auth data to reuse later for faster reconnections and less authentication requests to Spotify
-        let auth_data = session.auth_data();
+        // librespot persists the reusable credentials to the cache on connect, so
+        // there is no auth data to hand back to the caller.
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel(16);
@@ -182,7 +185,7 @@ impl Player {
         });
         tokio::spawn(player.run());
 
-        Ok((PlayerHandle { commands: tx }, event_rx, auth_data))
+        Ok((PlayerHandle { commands: tx }, event_rx))
     }
 
     async fn run(mut self) {

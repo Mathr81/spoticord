@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.0.0 | July 7th 2026
+
+Stripped Spoticord down to a **single-account, self-hostable** build for personal
+use. This is a breaking change: the multi-user model is gone.
+
+- Removed the `spoticord_database` crate and the entire PostgreSQL dependency.
+  There is no more per-user account storage.
+- Removed the `spoticord_stats` crate and its Redis dependency.
+- Removed the `/link`, `/unlink` and `/rename` commands and the dependency on the
+  external `spoticord-link` frontend. Also removed the `/token` debug command.
+- The bot now plays from a single Spotify account. Credentials are obtained once
+  through librespot's interactive OAuth flow (an authorization URL is printed on
+  first launch) and cached to disk (`CACHE_DIR`, default `/data`), so subsequent
+  launches sign in automatically.
+- New configuration: only `DISCORD_TOKEN` is required; `DEVICE_NAME` and
+  `CACHE_DIR` are optional. Removed `DATABASE_URL`, `LINK_URL`, `KV_URL`,
+  `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`.
+- Simplified the Dockerfile (no more libpq / PostgreSQL cross-compilation) and
+  the `docker-compose.yml` (just the bot plus a volume for the credentials cache).
+
 ## 2.3.0 | July 6th 2026
 
 - Updated `songbird` from 0.4.4 to 0.6.0, adding support for Discord's mandatory

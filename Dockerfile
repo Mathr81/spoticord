@@ -12,28 +12,19 @@ FROM --platform=linux/amd64 rust:1.94-slim AS builder
 
 WORKDIR /app
 
-# Add extra build dependencies here
+# Build dependencies: cmake for the native audio/crypto build scripts (opus2,
+# aws-lc), plus the aarch64 cross toolchain for the arm64 target.
 RUN apt-get update && apt install -yqq \
-    cmake gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu libpq-dev curl bzip2
-
-# Manually compile an arm64 build of libpq
-ENV PGVER=16.4
-RUN curl -o postgresql.tar.bz2 https://ftp.postgresql.org/pub/source/v${PGVER}/postgresql-${PGVER}.tar.bz2 && \
-    tar xjf postgresql.tar.bz2 && \
-    cd postgresql-${PGVER} && \
-    ./configure --host=aarch64-linux-gnu --enable-shared --disable-static --without-readline --without-zlib --without-icu && \
-    cd src/interfaces/libpq && \
-    make
+    cmake gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
 COPY . .
 
 RUN rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
 
-# Add `--no-default-features` if you don't want stats collection
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo build --release --target=x86_64-unknown-linux-gnu && \
-    RUSTFLAGS="-L /app/postgresql-${PGVER}/src/interfaces/libpq -C linker=aarch64-linux-gnu-gcc" cargo build --release --target=aarch64-unknown-linux-gnu && \
+    RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc" cargo build --release --target=aarch64-unknown-linux-gnu && \
     # Copy the executables outside of /target as it'll get unmounted after this RUN command
     cp /app/target/x86_64-unknown-linux-gnu/release/spoticord /app/x86_64 && \
     cp /app/target/aarch64-unknown-linux-gnu/release/spoticord /app/aarch64
@@ -45,7 +36,7 @@ ARG TARGETPLATFORM
 ENV TARGETPLATFORM=${TARGETPLATFORM}
 
 # Add extra runtime dependencies here
-RUN apt update && apt install -y ca-certificates libpq-dev
+RUN apt update && apt install -y ca-certificates
 
 # Copy spoticord binaries from builder to /tmp so we can dynamically use them
 COPY --from=builder \

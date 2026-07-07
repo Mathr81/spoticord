@@ -1,45 +1,29 @@
-# Minimal self-hosting stack for Spoticord: the bot plus the PostgreSQL and Redis
-# services it needs. Copy `.env.example` to `.env`, fill it in, then:
+# Self-hosting for the single-account (personal) build of Spoticord.
+# No database, no Redis, no spoticord-link — just the bot.
 #
-#     docker compose up -d
+#   cp .env.example .env      # then fill in DISCORD_TOKEN
+#   docker compose up -d
+#   docker compose logs -f    # on first run, open the Spotify URL printed here
 #
-# You still need to host a `spoticord-link` frontend separately for Spotify
-# account linking (see LINK_URL in .env.example).
+# The first launch prints a Spotify authorization URL: open it once and approve.
+# The reusable credentials are then saved to the `spoticord-data` volume, so
+# later restarts sign in automatically.
 
 services:
   spoticord:
     # Pulls the image published by the `build-push` workflow once this branch is
     # merged to `main`. To build locally instead, comment out `image:` and
-    # uncomment `build:` (note: the Dockerfile is tuned for CI cross-compilation
-    # and may be slow or fail on non-amd64 hosts).
+    # uncomment `build:`.
     image: ghcr.io/mathr81/spoticord:latest
     # build: .
     restart: unless-stopped
     env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: spoticord
-      POSTGRES_PASSWORD: spoticord
-      POSTGRES_DB: spoticord
     volumes:
-      - spoticord-db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U spoticord -d spoticord"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
+      - spoticord-data:/data
+    # Only needed for the one-time OAuth login: lets you reach the redirect
+    # server the bot spins up. You can remove this after the first sign-in.
+    ports:
+      - "8898:8898"
 
 volumes:
-  spoticord-db:
+  spoticord-data:

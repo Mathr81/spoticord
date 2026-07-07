@@ -1,6 +1,5 @@
 mod env;
 
-use rspotify::{AuthCodeSpotify, Config, Credentials, OAuth, Token};
 use serenity::all::GatewayIntents;
 
 #[cfg(not(debug_assertions))]
@@ -23,26 +22,12 @@ pub fn discord_intents() -> GatewayIntents {
     GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES
 }
 
-pub fn database_url() -> &'static str {
-    &env::DATABASE_URL
+/// The Spotify Connect device name the bot advertises.
+pub fn device_name() -> &'static str {
+    &env::DEVICE_NAME
 }
 
-pub fn link_url() -> &'static str {
-    &env::LINK_URL
-}
-
-pub fn kv_url() -> &'static str {
-    &env::KV_URL
-}
-
-pub fn get_spotify(token: Token) -> AuthCodeSpotify {
-    AuthCodeSpotify::from_token_with_config(
-        token,
-        Credentials {
-            id: env::SPOTIFY_CLIENT_ID.to_string(),
-            secret: Some(env::SPOTIFY_CLIENT_SECRET.to_string()),
-        },
-        OAuth::default(),
-        Config::default(),
-    )
+/// Directory where the reusable Spotify credentials are cached.
+pub fn cache_dir() -> &'static str {
+    &env::CACHE_DIR
 }
