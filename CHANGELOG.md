@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.0 | July 7th 2026
+
+- Bumped Spotify streaming quality from 160kbps to **320kbps** (the highest
+  Spotify offers; Premium only). Note the audio Discord actually receives is
+  still capped by the voice channel's bitrate.
+- Added **`/jam`**: starts (or fetches) a Spotify Jam for the bot's device and
+  returns a shareable join link, so anyone can hop in and control the music.
+  Uses Spotify's undocumented `social-connect` API.
+- Added **`/volume`** (0-100%) and **`/shuffle`** (on/off), both synced with
+  Spotify via the Connect controls.
+
 ## 3.1.0 | July 7th 2026
 
 - Upgraded `librespot` from 0.5.0 to 0.8.0. 0.5.0 is too old for Spotify's

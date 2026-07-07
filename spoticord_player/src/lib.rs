@@ -34,9 +34,12 @@ enum PlayerCommand {
     PreviousTrack,
     Pause,
     Play,
+    SetVolume(u16),
+    SetShuffle(bool),
 
     GetPlaybackInfo(oneshot::Sender<Option<PlaybackInfo>>),
     GetLyrics(oneshot::Sender<Option<Lyrics>>),
+    CreateJam(oneshot::Sender<Result<String, String>>),
 
     Shutdown,
 }
@@ -101,8 +104,8 @@ impl Player {
         let (tx_sink, rx_sink) = mpsc::unbounded_channel();
         let player = SpotifyPlayer::new(
             PlayerConfig {
-                // 96kbps causes audio key errors, so enjoy the quality upgrade
-                bitrate: Bitrate::Bitrate160,
+                // Highest quality Spotify offers (320kbps OGG Vorbis, Premium only).
+                bitrate: Bitrate::Bitrate320,
                 ..Default::default()
             },
             session.clone(),
@@ -225,9 +228,12 @@ impl Player {
             PlayerCommand::PreviousTrack => _ = self.spirc.prev(),
             PlayerCommand::Pause => _ = self.spirc.pause(),
             PlayerCommand::Play => _ = self.spirc.play(),
+            PlayerCommand::SetVolume(volume) => _ = self.spirc.set_volume(volume),
+            PlayerCommand::SetShuffle(shuffle) => _ = self.spirc.shuffle(shuffle),
 
             PlayerCommand::GetPlaybackInfo(tx) => _ = tx.send(self.playback_info.clone()),
             PlayerCommand::GetLyrics(tx) => self.get_lyrics(tx).await,
+            PlayerCommand::CreateJam(tx) => _ = tx.send(self.create_jam().await),
 
             PlayerCommand::Shutdown => self.commands.close(),
         };
@@ -317,6 +323,44 @@ impl Player {
 
         _ = tx.send(Some(lyrics));
     }
+
+    /// Create (or fetch the existing) Spotify Jam for the bot's playback device and
+    /// return a shareable join link.
+    ///
+    /// This uses Spotify's undocumented `social-connect` API, so it may break if
+    /// Spotify changes it. On success others can open the link to join and control
+    /// playback.
+    async fn create_jam(&self) -> Result<String, String> {
+        let device_id = self.session.device_id();
+        let endpoint =
+            format!("/social-connect/v2/sessions/current_or_new?local_device_id={device_id}");
+
+        let bytes = self
+            .session
+            .spclient()
+            .request_as_json(&http::Method::GET, &endpoint, None, None)
+            .await
+            .map_err(|why| format!("Spotify rejected the Jam request: {why}"))?;
+
+        let json: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|why| format!("Could not parse Spotify's Jam response: {why}"))?;
+
+        trace!("Jam response: {json}");
+
+        if let Some(url) = json.get("join_session_url").and_then(|value| value.as_str()) {
+            return Ok(url.to_owned());
+        }
+
+        if let Some(token) = json
+            .get("join_session_token")
+            .and_then(|value| value.as_str())
+        {
+            return Ok(format!("https://open.spotify.com/socialsession/{token}"));
+        }
+
+        error!("Unexpected Jam response from Spotify: {json}");
+        Err("Spotify did not return a Jam link. Your account may not support Jams.".to_owned())
+    }
 }
 
 impl Drop for Player {
@@ -352,6 +396,16 @@ impl PlayerHandle {
         _ = self.commands.send(PlayerCommand::Play).await;
     }
 
+    /// Set the Spotify playback volume. `volume` is `0..=u16::MAX`.
+    pub async fn set_volume(&self, volume: u16) {
+        _ = self.commands.send(PlayerCommand::SetVolume(volume)).await;
+    }
+
+    /// Toggle Spotify shuffle mode.
+    pub async fn set_shuffle(&self, shuffle: bool) {
+        _ = self.commands.send(PlayerCommand::SetShuffle(shuffle)).await;
+    }
+
     pub async fn playback_info(&self) -> Result<Option<PlaybackInfo>> {
         let (tx, rx) = oneshot::channel();
         self.commands
@@ -364,6 +418,17 @@ impl PlayerHandle {
     pub async fn get_lyrics(&self) -> Result<Option<Lyrics>> {
         let (tx, rx) = oneshot::channel();
         self.commands.send(PlayerCommand::GetLyrics(tx)).await?;
+
+        Ok(rx.await?)
+    }
+
+    /// Create (or fetch) a Spotify Jam and return a shareable join link.
+    ///
+    /// The inner `Result` carries a user-facing error message when Spotify
+    /// refuses the request (e.g. the account does not support Jams).
+    pub async fn create_jam(&self) -> Result<std::result::Result<String, String>> {
+        let (tx, rx) = oneshot::channel();
+        self.commands.send(PlayerCommand::CreateJam(tx)).await?;
 
         Ok(rx.await?)
     }
