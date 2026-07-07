@@ -8,7 +8,11 @@
 # as using QEMU to compile takes way too long (multiple hours)
 
 # Builder
-FROM --platform=linux/amd64 rust:1.94-slim AS builder
+#
+# Pin the Debian base to bookworm so the binary links against the same glibc as
+# the `debian:bookworm-slim` runtime below. Using the default `rust:1.94-slim`
+# (newer Debian) produces a binary that needs a glibc the runtime doesn't have.
+FROM --platform=linux/amd64 rust:1.94-slim-bookworm AS builder
 
 WORKDIR /app
 
