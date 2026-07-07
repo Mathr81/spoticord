@@ -3,7 +3,7 @@ pub mod info;
 use anyhow::Result;
 use info::PlaybackInfo;
 use librespot::{
-    connect::{config::ConnectConfig, spirc::Spirc},
+    connect::{ConnectConfig, Spirc},
     core::{
         cache::Cache, error::ErrorKind, http_client::HttpClientError, Session as SpotifySession,
         SessionConfig,
@@ -95,7 +95,8 @@ impl Player {
         let mixer = (mixer::find(Some("softvol")).expect("missing softvol mixer"))(MixerConfig {
             volume_ctrl: VolumeCtrl::Log(VolumeCtrl::DEFAULT_DB_RANGE),
             ..Default::default()
-        });
+        })
+        .expect("failed to open softvol mixer");
 
         let (tx_sink, rx_sink) = mpsc::unbounded_channel();
         let player = SpotifyPlayer::new(
@@ -120,7 +121,7 @@ impl Player {
             match Spirc::new(
                 ConnectConfig {
                     name: device_name.clone(),
-                    initial_volume: Some((0.75f32 * u16::MAX as f32) as u16),
+                    initial_volume: (0.75f32 * u16::MAX as f32) as u16,
                     ..Default::default()
                 },
                 session.clone(),
