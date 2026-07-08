@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.3.0 | July 8th 2026
+
+- Added **`/dashboard`**: a richer, auto-updating version of `/playing`. On top of
+  the song details and progress bar it shows the current volume, shuffle and
+  repeat state, and adds a full row of interactive buttons:
+  - ⏮ / Play-Pause / ⏭ media controls (as `/playing` already had),
+  - 🔉 / 🔊 volume down/up (±10% per press),
+  - 🔀 shuffle toggle,
+  - 🔁 repeat cycle (Off → All → One),
+  - 🎉 Jam, which starts (or fetches) a Spotify Jam and DMs you the join link
+    ephemerally.
+
+  Like `/playing` it accepts an update-behavior option (auto-update, static or
+  pinned).
+- Added **`/repeat`** (Off / All / One), mirroring the new dashboard repeat
+  button. The player now tracks volume, shuffle and repeat state so the dashboard
+  can display it.
+
 ## 3.2.0 | July 7th 2026
 
 - Bumped Spotify streaming quality from 160kbps to **320kbps** (the highest

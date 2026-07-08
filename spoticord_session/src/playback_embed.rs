@@ -10,7 +10,7 @@ use serenity::{
     },
     futures::StreamExt,
 };
-use spoticord_player::{info::PlaybackInfo, PlayerHandle};
+use spoticord_player::{info::PlaybackInfo, PlayerHandle, PlayerState, RepeatMode, DEFAULT_VOLUME};
 use spoticord_utils::discord::Colors;
 use std::{ops::ControlFlow, time::Duration};
 use tokio::{sync::mpsc, time::Instant};
@@ -55,9 +55,14 @@ pub struct PlaybackEmbed {
     update_in: Option<Duration>,
     force_edit: bool,
     update_behavior: UpdateBehavior,
+    /// When set, render the full "dashboard" layout (extra controls + state line).
+    full: bool,
 
     rx: mpsc::Receiver<Command>,
 }
+
+/// Amount a single volume button press changes the volume by (~10% of the range).
+const VOLUME_STEP: u16 = u16::MAX / 10;
 
 impl PlaybackEmbed {
     pub async fn create(
@@ -65,6 +70,7 @@ impl PlaybackEmbed {
         handle: SessionHandle,
         interaction: CommandInteraction,
         update_behavior: UpdateBehavior,
+        full: bool,
     ) -> Result<Option<PlaybackEmbedHandle>> {
         let ctx = session.context.clone();
 
@@ -82,6 +88,12 @@ impl PlaybackEmbed {
             return Ok(None);
         };
 
+        let state = if full {
+            session.player.state().await.ok()
+        } else {
+            None
+        };
+
         let ctx_id = interaction.id.get();
 
         // Send initial reply
@@ -90,8 +102,8 @@ impl PlaybackEmbed {
                 &ctx,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .embed(build_embed(&playback_info, &owner))
-                        .components(vec![build_buttons(ctx_id, playback_info.playing())]),
+                        .embed(build_embed(&playback_info, &owner, state.as_ref()))
+                        .components(build_components(ctx_id, playback_info.playing(), full)),
                 ),
             )
             .await?;
@@ -118,6 +130,7 @@ impl PlaybackEmbed {
             update_in: None,
             force_edit: false,
             update_behavior,
+            full,
             rx,
         };
 
@@ -231,13 +244,69 @@ impl PlaybackEmbed {
                     player.play().await
                 }
             }
+            Some("shuffle") => {
+                let shuffle = player.state().await.map(|state| !state.shuffle).unwrap_or(true);
+                player.set_shuffle(shuffle).await;
+
+                acknowledge(&self.ctx, &press).await;
+                ephemeral_followup(
+                    &self.ctx,
+                    &press,
+                    format!("🔀 Shuffle **{}**", if shuffle { "on" } else { "off" }),
+                )
+                .await;
+                return;
+            }
+            Some("repeat") => {
+                let mode = player
+                    .state()
+                    .await
+                    .map(|state| state.repeat.next())
+                    .unwrap_or(RepeatMode::Context);
+                player.set_repeat(mode).await;
+
+                acknowledge(&self.ctx, &press).await;
+                ephemeral_followup(&self.ctx, &press, format!("🔁 Repeat **{}**", mode.label()))
+                    .await;
+                return;
+            }
+            Some(action @ ("voldown" | "volup")) => {
+                let current = player
+                    .state()
+                    .await
+                    .map(|state| state.volume)
+                    .unwrap_or(DEFAULT_VOLUME);
+                let volume = if action == "volup" {
+                    current.saturating_add(VOLUME_STEP)
+                } else {
+                    current.saturating_sub(VOLUME_STEP)
+                };
+                player.set_volume(volume).await;
+
+                let percent = u32::from(volume) * 100 / u32::from(u16::MAX);
+                acknowledge(&self.ctx, &press).await;
+                ephemeral_followup(&self.ctx, &press, format!("🔊 Volume **{percent}%**")).await;
+                return;
+            }
+            Some("jam") => {
+                acknowledge(&self.ctx, &press).await;
+
+                let message = match player.create_jam().await {
+                    Ok(Ok(url)) => format!(
+                        "🎉 **Spotify Jam** — anyone with this link can join and control the music:\n{url}"
+                    ),
+                    Ok(Err(why)) => why,
+                    Err(why) => format!("Failed to start a Jam: {why}"),
+                };
+
+                ephemeral_followup(&self.ctx, &press, message).await;
+                return;
+            }
 
             _ => {}
         }
 
-        _ = press
-            .create_response(&self.ctx, CreateInteractionResponse::Acknowledge)
-            .await;
+        acknowledge(&self.ctx, &press).await;
     }
 
     async fn get_info(&self) -> Result<(PlayerHandle, PlaybackInfo, User)> {
@@ -281,6 +350,12 @@ impl PlaybackEmbed {
             }
         };
 
+        let state = if self.full {
+            player.state().await.ok()
+        } else {
+            None
+        };
+
         let should_pin = !force_edit && self.update_behavior.is_pinned();
 
         if should_pin {
@@ -292,8 +367,8 @@ impl PlaybackEmbed {
                 .send_message(
                     &self.ctx,
                     CreateMessage::new()
-                        .embed(build_embed(&playback_info, &owner))
-                        .components(vec![build_buttons(self.id, playback_info.playing())]),
+                        .embed(build_embed(&playback_info, &owner, state.as_ref()))
+                        .components(build_components(self.id, playback_info.playing(), self.full)),
                 )
                 .await
             {
@@ -309,8 +384,8 @@ impl PlaybackEmbed {
             .edit(
                 &self.ctx,
                 EditMessage::new()
-                    .embed(build_embed(&playback_info, &owner))
-                    .components(vec![build_buttons(self.id, playback_info.playing())]),
+                    .embed(build_embed(&playback_info, &owner, state.as_ref()))
+                    .components(build_components(self.id, playback_info.playing(), self.full)),
             )
             .await
         {
@@ -383,7 +458,28 @@ fn not_playing_embed() -> CreateEmbed {
         .color(Colors::Error)
 }
 
-fn build_embed(playback_info: &PlaybackInfo, owner: &User) -> CreateEmbed {
+async fn acknowledge(ctx: &Context, press: &ComponentInteraction) {
+    _ = press
+        .create_response(ctx, CreateInteractionResponse::Acknowledge)
+        .await;
+}
+
+async fn ephemeral_followup(
+    ctx: &Context,
+    press: &ComponentInteraction,
+    content: impl Into<String>,
+) {
+    _ = press
+        .create_followup(
+            ctx,
+            CreateInteractionResponseFollowup::new()
+                .content(content)
+                .ephemeral(true),
+        )
+        .await;
+}
+
+fn build_embed(playback_info: &PlaybackInfo, owner: &User, state: Option<&PlayerState>) -> CreateEmbed {
     let mut description = String::new();
 
     description += &format!("## [{}]({})\n", playback_info.name(), playback_info.url());
@@ -438,6 +534,16 @@ fn build_embed(playback_info: &PlaybackInfo, owner: &User) -> CreateEmbed {
         spoticord_utils::time_to_string(playback_info.duration() / 1000)
     );
 
+    // Dashboard-only line showing volume and shuffle state.
+    if let Some(state) = state {
+        let percent = u32::from(state.volume) * 100 / u32::from(u16::MAX);
+        description += &format!(
+            "\n:level_slider: {percent}%\u{2003}:twisted_rightwards_arrows: {}\u{2003}:repeat: {}",
+            if state.shuffle { "On" } else { "Off" },
+            state.repeat.label()
+        );
+    }
+
     CreateEmbed::new()
         .author(
             CreateEmbedAuthor::new("Currently Playing")
@@ -452,20 +558,19 @@ fn build_embed(playback_info: &PlaybackInfo, owner: &User) -> CreateEmbed {
         .color(Colors::Info)
 }
 
-fn build_buttons(id: u64, playing: bool) -> CreateActionRow {
-    let prev_button_id = format!("{id}-prev");
-    let next_button_id = format!("{id}-next");
-    let pause_button_id = format!("{id}-pause");
-
-    let prev_button = CreateButton::new(prev_button_id)
+/// Build the message components (button rows). The compact layout has a single
+/// media-control row; the full dashboard adds a second row with shuffle, volume
+/// and Jam controls.
+fn build_components(id: u64, playing: bool, full: bool) -> Vec<CreateActionRow> {
+    let prev_button = CreateButton::new(format!("{id}-prev"))
         .style(ButtonStyle::Primary)
-        .label("<<");
+        .label("⏮");
 
-    let next_button = CreateButton::new(next_button_id)
+    let next_button = CreateButton::new(format!("{id}-next"))
         .style(ButtonStyle::Primary)
-        .label(">>");
+        .label("⏭");
 
-    let pause_button = CreateButton::new(pause_button_id)
+    let pause_button = CreateButton::new(format!("{id}-pause"))
         .style(if playing {
             ButtonStyle::Danger
         } else {
@@ -473,5 +578,39 @@ fn build_buttons(id: u64, playing: bool) -> CreateActionRow {
         })
         .label(if playing { "Pause" } else { "Play" });
 
-    CreateActionRow::Buttons(vec![prev_button, pause_button, next_button])
+    let media_row = CreateActionRow::Buttons(vec![prev_button, pause_button, next_button]);
+
+    if !full {
+        return vec![media_row];
+    }
+
+    let vol_down_button = CreateButton::new(format!("{id}-voldown"))
+        .style(ButtonStyle::Secondary)
+        .label("🔉");
+
+    let vol_up_button = CreateButton::new(format!("{id}-volup"))
+        .style(ButtonStyle::Secondary)
+        .label("🔊");
+
+    let shuffle_button = CreateButton::new(format!("{id}-shuffle"))
+        .style(ButtonStyle::Secondary)
+        .label("🔀");
+
+    let repeat_button = CreateButton::new(format!("{id}-repeat"))
+        .style(ButtonStyle::Secondary)
+        .label("🔁");
+
+    let jam_button = CreateButton::new(format!("{id}-jam"))
+        .style(ButtonStyle::Success)
+        .label("🎉 Jam");
+
+    let extra_row = CreateActionRow::Buttons(vec![
+        vol_down_button,
+        vol_up_button,
+        shuffle_button,
+        repeat_button,
+        jam_button,
+    ]);
+
+    vec![media_row, extra_row]
 }

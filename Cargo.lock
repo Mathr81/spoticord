@@ -4398,7 +4398,7 @@ dependencies = [
 
 [[package]]
 name = "spoticord"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -4418,7 +4418,7 @@ dependencies = [
 
 [[package]]
 name = "spoticord_audio"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "librespot",
  "songbird",
@@ -4428,14 +4428,14 @@ dependencies = [
 
 [[package]]
 name = "spoticord_config"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "serenity",
 ]
 
 [[package]]
 name = "spoticord_player"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -4452,7 +4452,7 @@ dependencies = [
 
 [[package]]
 name = "spoticord_session"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "librespot",
@@ -4469,7 +4469,7 @@ dependencies = [
 
 [[package]]
 name = "spoticord_utils"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "poise",
 ]

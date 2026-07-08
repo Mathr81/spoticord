@@ -28,6 +28,52 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 
+/// Default playback volume (75% of `u16::MAX`), matching the value handed to
+/// librespot's `ConnectConfig` when the player starts.
+pub const DEFAULT_VOLUME: u16 = 49151;
+
+/// Repeat mode, matching Spotify's three states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RepeatMode {
+    #[default]
+    Off,
+    /// Repeat the whole context (playlist/album/queue).
+    Context,
+    /// Repeat the current track.
+    Track,
+}
+
+impl RepeatMode {
+    /// The next mode when cycling through the dashboard button (Off → Context → Track → Off).
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Context,
+            Self::Context => Self::Track,
+            Self::Track => Self::Off,
+        }
+    }
+
+    /// A short human-readable label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Context => "All",
+            Self::Track => "One",
+        }
+    }
+}
+
+/// A snapshot of the controllable player state that isn't part of [`PlaybackInfo`].
+///
+/// These values reflect the commands Spoticord has issued; they may drift if the
+/// same account is controlled from elsewhere (e.g. the Spotify app directly).
+#[derive(Debug, Clone, Copy)]
+pub struct PlayerState {
+    pub volume: u16,
+    pub shuffle: bool,
+    pub repeat: RepeatMode,
+}
+
 #[derive(Debug)]
 enum PlayerCommand {
     NextTrack,
@@ -36,8 +82,10 @@ enum PlayerCommand {
     Play,
     SetVolume(u16),
     SetShuffle(bool),
+    SetRepeat(RepeatMode),
 
     GetPlaybackInfo(oneshot::Sender<Option<PlaybackInfo>>),
+    GetState(oneshot::Sender<PlayerState>),
     GetLyrics(oneshot::Sender<Option<Lyrics>>),
     CreateJam(oneshot::Sender<Result<String, String>>),
 
@@ -60,6 +108,9 @@ pub struct Player {
     stream: Stream,
 
     playback_info: Option<PlaybackInfo>,
+    volume: u16,
+    shuffle: bool,
+    repeat: RepeatMode,
 
     // Communication
     events: mpsc::Sender<PlayerEvent>,
@@ -124,7 +175,7 @@ impl Player {
             match Spirc::new(
                 ConnectConfig {
                     name: device_name.clone(),
-                    initial_volume: (0.75f32 * u16::MAX as f32) as u16,
+                    initial_volume: DEFAULT_VOLUME,
                     ..Default::default()
                 },
                 session.clone(),
@@ -168,6 +219,9 @@ impl Player {
             stream,
 
             playback_info: None,
+            volume: DEFAULT_VOLUME,
+            shuffle: false,
+            repeat: RepeatMode::Off,
 
             events: event_tx.clone(),
 
@@ -228,10 +282,39 @@ impl Player {
             PlayerCommand::PreviousTrack => _ = self.spirc.prev(),
             PlayerCommand::Pause => _ = self.spirc.pause(),
             PlayerCommand::Play => _ = self.spirc.play(),
-            PlayerCommand::SetVolume(volume) => _ = self.spirc.set_volume(volume),
-            PlayerCommand::SetShuffle(shuffle) => _ = self.spirc.shuffle(shuffle),
+            PlayerCommand::SetVolume(volume) => {
+                self.volume = volume;
+                _ = self.spirc.set_volume(volume);
+            }
+            PlayerCommand::SetShuffle(shuffle) => {
+                self.shuffle = shuffle;
+                _ = self.spirc.shuffle(shuffle);
+            }
+            PlayerCommand::SetRepeat(mode) => {
+                self.repeat = mode;
+                match mode {
+                    RepeatMode::Off => {
+                        _ = self.spirc.repeat_track(false);
+                        _ = self.spirc.repeat(false);
+                    }
+                    RepeatMode::Context => {
+                        _ = self.spirc.repeat_track(false);
+                        _ = self.spirc.repeat(true);
+                    }
+                    RepeatMode::Track => {
+                        _ = self.spirc.repeat_track(true);
+                    }
+                }
+            }
 
             PlayerCommand::GetPlaybackInfo(tx) => _ = tx.send(self.playback_info.clone()),
+            PlayerCommand::GetState(tx) => {
+                _ = tx.send(PlayerState {
+                    volume: self.volume,
+                    shuffle: self.shuffle,
+                    repeat: self.repeat,
+                })
+            }
             PlayerCommand::GetLyrics(tx) => self.get_lyrics(tx).await,
             PlayerCommand::CreateJam(tx) => _ = tx.send(self.create_jam().await),
 
@@ -419,11 +502,24 @@ impl PlayerHandle {
         _ = self.commands.send(PlayerCommand::SetShuffle(shuffle)).await;
     }
 
+    /// Set the Spotify repeat mode.
+    pub async fn set_repeat(&self, mode: RepeatMode) {
+        _ = self.commands.send(PlayerCommand::SetRepeat(mode)).await;
+    }
+
     pub async fn playback_info(&self) -> Result<Option<PlaybackInfo>> {
         let (tx, rx) = oneshot::channel();
         self.commands
             .send(PlayerCommand::GetPlaybackInfo(tx))
             .await?;
+
+        Ok(rx.await?)
+    }
+
+    /// Retrieve the current volume and shuffle state.
+    pub async fn state(&self) -> Result<PlayerState> {
+        let (tx, rx) = oneshot::channel();
+        self.commands.send(PlayerCommand::GetState(tx)).await?;
 
         Ok(rx.await?)
     }
