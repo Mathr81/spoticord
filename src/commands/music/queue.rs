@@ -22,7 +22,7 @@ pub async fn queue(
     let manager = ctx.data();
     let guild = ctx.guild_id().expect("poise lied to me");
 
-    let Some(session) = manager.get_session(SessionQuery::Guild(guild)) else {
+    if manager.get_session(SessionQuery::Guild(guild)).is_none() {
         ctx.send(
             CreateReply::default()
                 .embed(
@@ -36,15 +36,24 @@ pub async fn queue(
         .await?;
 
         return Ok(());
+    }
+
+    let Some(spotify) = manager.spotify() else {
+        ctx.send(
+            CreateReply::default()
+                .embed(browse::not_configured_embed())
+                .ephemeral(true),
+        )
+        .await?;
+
+        return Ok(());
     };
 
     ctx.defer().await?;
 
-    let player = session.player().await?;
-
     let Some(query) = query else {
         // No query: just display the current queue.
-        let tracks = match player.get_queue().await? {
+        let tracks = match spotify.get_queue().await {
             Ok(tracks) => tracks,
             Err(why) => {
                 ctx.send(
@@ -52,7 +61,7 @@ pub async fn queue(
                         .embed(
                             CreateEmbed::new()
                                 .title("Could not read the queue")
-                                .description(why)
+                                .description(why.to_string())
                                 .color(Colors::Error),
                         )
                         .ephemeral(true),
@@ -81,7 +90,7 @@ pub async fn queue(
         return Ok(());
     };
 
-    let results = match player.search(&query).await? {
+    let results = match spotify.search(&query).await {
         Ok(results) => results,
         Err(why) => {
             ctx.send(
@@ -89,7 +98,7 @@ pub async fn queue(
                     .embed(
                         CreateEmbed::new()
                             .title("Search failed")
-                            .description(why)
+                            .description(why.to_string())
                             .color(Colors::Error),
                     )
                     .ephemeral(true),
@@ -150,7 +159,7 @@ pub async fn queue(
             )
             .await;
 
-        let content = match player.add_to_queue(track.uri.clone()).await? {
+        let content = match spotify.add_to_queue(&track.uri).await {
             Ok(()) => format!(
                 "➕ Added **{}** — {} to the queue",
                 track.name, track.artists

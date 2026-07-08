@@ -3,6 +3,7 @@ use crate::error::Result;
 use librespot::{core::cache::Cache, discovery::Credentials};
 use serenity::all::{ChannelId, GuildId, UserId};
 use songbird::Songbird;
+use spoticord_spotify::WebApi;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -20,6 +21,9 @@ pub struct SessionManager {
     cache: Cache,
     device_name: Arc<str>,
 
+    /// Spotify Web API client for search/queue, if a Spotify app is configured.
+    spotify: Option<Arc<WebApi>>,
+
     sessions: Arc<Mutex<HashMap<GuildId, SessionHandle>>>,
     owners: Arc<Mutex<HashMap<UserId, SessionHandle>>>,
 }
@@ -35,6 +39,7 @@ impl SessionManager {
         credentials: Credentials,
         cache: Cache,
         device_name: impl Into<String>,
+        spotify: Option<Arc<WebApi>>,
     ) -> Self {
         Self {
             songbird,
@@ -42,6 +47,8 @@ impl SessionManager {
             credentials,
             cache,
             device_name: device_name.into().into(),
+
+            spotify,
 
             sessions: Arc::new(Mutex::new(HashMap::new())),
             owners: Arc::new(Mutex::new(HashMap::new())),
@@ -147,5 +154,10 @@ impl SessionManager {
     /// The Spotify Connect device name to advertise.
     pub fn device_name(&self) -> String {
         self.device_name.to_string()
+    }
+
+    /// The Spotify Web API client, if a Spotify app is configured.
+    pub fn spotify(&self) -> Option<Arc<WebApi>> {
+        self.spotify.clone()
     }
 }
