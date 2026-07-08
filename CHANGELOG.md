@@ -2,18 +2,21 @@
 
 ## 3.3.0 | July 8th 2026
 
-- Added **`/dashboard`**: a richer, auto-updating version of `/playing`. On top of
-  the song details and progress bar it shows the current volume, shuffle and
-  repeat state, and adds a full row of interactive buttons:
-  - ⏮ / Play-Pause / ⏭ media controls (as `/playing` already had),
+- Added **`/dashboard`**: a rich, auto-updating playback dashboard. It shows the
+  track, a **live progress bar that advances on its own** (the embed re-renders
+  every few seconds while playing), the album art and the current volume, and
+  adds a full row of interactive buttons:
+  - ⏮ / Play-Pause / ⏭ media controls,
   - 🔉 / 🔊 volume down/up (±10% per press),
-  - 🔀 shuffle toggle,
-  - 🔁 repeat cycle (Off → All → One),
-  - 🎉 Jam, which starts (or fetches) a Spotify Jam and DMs you the join link
-    ephemerally.
+  - 🔀 shuffle and 🔁 repeat, whose **on/off state is shown by button colour**
+    (green = on) rather than text — the repeat button also switches between 🔁
+    (all) and 🔂 (one),
+  - 🎉 Jam, which starts (or fetches) a Spotify Jam and replies ephemerally with
+    the join link and a scannable QR code.
 
   Like `/playing` it accepts an update-behavior option (auto-update, static or
-  pinned).
+  pinned). The `/playing` embed also gained the smoother, self-advancing progress
+  bar.
 - Added **`/repeat`** (Off / All / One), mirroring the new dashboard repeat
   button. The player now tracks volume, shuffle and repeat state so the dashboard
   can display it.
@@ -25,10 +28,17 @@
 - `/jam` (and the dashboard's 🎉 Jam button) now also attaches a **scannable QR
   code** of the Jam link, like the Spotify app's share screen.
 
-  Search, queueing and playback are driven through Spotify's Web API using a token
-  from librespot; they require the bot to be the active Spotify Connect device
-  (i.e. selected as the playback target), which is the normal way Spoticord is
-  used.
+  Search, queueing and playback are driven through Spotify's Web API. The token is
+  obtained via librespot's **login5** flow — Spotify has disabled the legacy
+  keymaster token endpoint (it now returns `403 Invalid request`), so the older
+  `token_provider` path no longer works. These features require the bot to be the
+  active Spotify Connect device (i.e. selected as the playback target), which is
+  the normal way Spoticord is used.
+- CI: removed the redundant `build.yml` workflow. It ran on both `push` and
+  `pull_request` (so it fired twice per PR push) and only re-compiled what the
+  Docker image build already does, producing a binary artifact that isn't used
+  now that deployment is via the published image. Linting (`cargo-clippy`) and the
+  Docker build (`build-push`) remain.
 
 ## 3.2.0 | July 7th 2026
 

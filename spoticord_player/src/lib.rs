@@ -74,9 +74,6 @@ pub struct TrackResult {
     pub duration_ms: u32,
 }
 
-/// Web API scopes needed for search, queue and playback-state endpoints.
-const WEB_API_SCOPES: &str = "user-read-playback-state,user-modify-playback-state";
-
 /// A snapshot of the controllable player state that isn't part of [`PlaybackInfo`].
 ///
 /// These values reflect the commands Spoticord has issued; they may drift if the
@@ -448,10 +445,14 @@ impl Player {
         method: http::Method,
         url: &str,
     ) -> Result<serde_json::Value, String> {
+        // Use login5 for the Web API token. Spotify has disabled the legacy
+        // keymaster token endpoint (`token_provider().get_token`), which now 403s
+        // with "Invalid request". login5 mints a token from the same cached
+        // credentials and works because our OAuth login uses the default client id.
         let token = self
             .session
-            .token_provider()
-            .get_token(WEB_API_SCOPES)
+            .login5()
+            .auth_token()
             .await
             .map_err(|why| format!("Could not get a Spotify token: {why}"))?;
 
@@ -568,8 +569,10 @@ impl Player {
             }
             _ => {
                 error!("Unexpected Jam response from Spotify: {json}");
-                Err("Spotify did not return a Jam link. Your account may not support Jams."
-                    .to_owned())
+                Err(
+                    "Spotify did not return a Jam link. Your account may not support Jams."
+                        .to_owned(),
+                )
             }
         }
     }

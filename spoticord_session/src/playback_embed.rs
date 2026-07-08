@@ -55,7 +55,7 @@ pub struct PlaybackEmbed {
     update_in: Option<Duration>,
     force_edit: bool,
     update_behavior: UpdateBehavior,
-    /// When set, render the full "dashboard" layout (extra controls + state line).
+    /// When set, render the full "dashboard" layout (extra controls + volume).
     full: bool,
 
     rx: mpsc::Receiver<Command>,
@@ -103,7 +103,11 @@ impl PlaybackEmbed {
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
                         .embed(build_embed(&playback_info, &owner, state.as_ref()))
-                        .components(build_components(ctx_id, playback_info.playing(), full)),
+                        .components(build_components(
+                            ctx_id,
+                            playback_info.playing(),
+                            state.as_ref(),
+                        )),
                 ),
             )
             .await?;
@@ -142,6 +146,10 @@ impl PlaybackEmbed {
     async fn run(mut self, collector: ComponentInteractionCollector) {
         let mut stream = collector.stream();
 
+        // Periodically re-render so the progress bar keeps moving while playing.
+        let mut refresh = tokio::time::interval(Duration::from_secs(7));
+        refresh.tick().await; // consume the immediate first tick
+
         loop {
             tokio::select! {
                 opt_command = self.rx.recv() => {
@@ -153,6 +161,12 @@ impl PlaybackEmbed {
                         break;
                     }
                 },
+
+                _ = refresh.tick() => {
+                    if self.tick_update().await.is_break() {
+                        break;
+                    }
+                }
 
                 opt_press = stream.next() => {
                     let Some(press) = opt_press else {
@@ -195,6 +209,21 @@ impl PlaybackEmbed {
         }
 
         ControlFlow::Continue(())
+    }
+
+    /// Periodic self-refresh: re-render in place while a track is actively
+    /// playing so the progress bar advances. Skips edits when paused, and stops
+    /// the embed once the session/player is gone.
+    async fn tick_update(&mut self) -> ControlFlow<(), ()> {
+        let Ok(player) = self.session.player().await else {
+            return ControlFlow::Break(());
+        };
+
+        match player.playback_info().await {
+            Ok(Some(info)) if info.playing() => self.update_embed(true).await,
+            Ok(_) => ControlFlow::Continue(()),
+            Err(_) => ControlFlow::Break(()),
+        }
     }
 
     async fn handle_press(&self, press: ComponentInteraction) {
@@ -245,7 +274,11 @@ impl PlaybackEmbed {
                 }
             }
             Some("shuffle") => {
-                let shuffle = player.state().await.map(|state| !state.shuffle).unwrap_or(true);
+                let shuffle = player
+                    .state()
+                    .await
+                    .map(|state| !state.shuffle)
+                    .unwrap_or(true);
                 player.set_shuffle(shuffle).await;
 
                 acknowledge(&self.ctx, &press).await;
@@ -295,8 +328,12 @@ impl PlaybackEmbed {
                     Ok(Ok(url)) => jam_followup(&self.ctx, &press, &url).await,
                     Ok(Err(why)) => ephemeral_followup(&self.ctx, &press, why).await,
                     Err(why) => {
-                        ephemeral_followup(&self.ctx, &press, format!("Failed to start a Jam: {why}"))
-                            .await
+                        ephemeral_followup(
+                            &self.ctx,
+                            &press,
+                            format!("Failed to start a Jam: {why}"),
+                        )
+                        .await
                     }
                 }
                 return;
@@ -367,7 +404,11 @@ impl PlaybackEmbed {
                     &self.ctx,
                     CreateMessage::new()
                         .embed(build_embed(&playback_info, &owner, state.as_ref()))
-                        .components(build_components(self.id, playback_info.playing(), self.full)),
+                        .components(build_components(
+                            self.id,
+                            playback_info.playing(),
+                            state.as_ref(),
+                        )),
                 )
                 .await
             {
@@ -384,7 +425,11 @@ impl PlaybackEmbed {
                 &self.ctx,
                 EditMessage::new()
                     .embed(build_embed(&playback_info, &owner, state.as_ref()))
-                    .components(build_components(self.id, playback_info.playing(), self.full)),
+                    .components(build_components(
+                        self.id,
+                        playback_info.playing(),
+                        state.as_ref(),
+                    )),
             )
             .await
         {
@@ -501,7 +546,42 @@ async fn jam_followup(ctx: &Context, press: &ComponentInteraction, url: &str) {
     _ = press.create_followup(ctx, followup.embed(embed)).await;
 }
 
-fn build_embed(playback_info: &PlaybackInfo, owner: &User, state: Option<&PlayerState>) -> CreateEmbed {
+/// Render a sleek progress bar for the current playback position.
+fn progress_bar(position: u32, duration: u32, playing: bool) -> String {
+    const SEGMENTS: u32 = 18;
+
+    let duration = duration.max(1);
+    let position = position.min(duration);
+    let filled = position * SEGMENTS / duration;
+
+    let mut bar = String::new();
+    for index in 0..SEGMENTS {
+        bar.push(if index < filled { '▰' } else { '▱' });
+    }
+
+    format!(
+        "{} `{}` {bar} `{}`",
+        if playing { "▶️" } else { "⏸️" },
+        spoticord_utils::time_to_string(position / 1000),
+        spoticord_utils::time_to_string(duration / 1000)
+    )
+}
+
+/// Pick a speaker emoji reflecting the current volume level.
+fn volume_emoji(percent: u32) -> &'static str {
+    match percent {
+        0 => "🔇",
+        1..=33 => "🔈",
+        34..=66 => "🔉",
+        _ => "🔊",
+    }
+}
+
+fn build_embed(
+    playback_info: &PlaybackInfo,
+    owner: &User,
+    state: Option<&PlayerState>,
+) -> CreateEmbed {
     let mut description = String::new();
 
     description += &format!("## [{}]({})\n", playback_info.name(), playback_info.url());
@@ -519,58 +599,38 @@ fn build_embed(playback_info: &PlaybackInfo, owner: &User, state: Option<&Player
             .collect::<Vec<_>>()
             .join(", ");
 
-        description += &format!("By {artists}\n");
+        description += &format!("by {artists}\n");
     }
 
     if let Some(album_name) = playback_info.album_name() {
-        description += &format!("Album: **{album_name}**\n");
+        description += &format!("💿 {album_name}\n");
     }
 
     if let Some(show_name) = playback_info.show_name() {
-        description += &format!("On {show_name}\n");
+        description += &format!("🎙️ {show_name}\n");
     }
 
     description += "\n";
-
-    let position = playback_info.current_position();
-    let index = position * 20 / playback_info.duration();
-
-    description += if playback_info.playing() {
-        "▶️ "
-    } else {
-        "⏸️ "
-    };
-
-    for i in 0..20 {
-        if i == index {
-            description.push('🔵');
-        } else {
-            description.push('▬');
-        }
-    }
-
-    description += "\n:alarm_clock: ";
-    description += &format!(
-        "{} / {}",
-        spoticord_utils::time_to_string(position / 1000),
-        spoticord_utils::time_to_string(playback_info.duration() / 1000)
+    description += &progress_bar(
+        playback_info.current_position(),
+        playback_info.duration(),
+        playback_info.playing(),
     );
 
-    // Dashboard-only line showing volume and shuffle state.
+    // Dashboard-only volume readout (shuffle/repeat are shown via button colour).
     if let Some(state) = state {
         let percent = u32::from(state.volume) * 100 / u32::from(u16::MAX);
-        description += &format!(
-            "\n:level_slider: {percent}%\u{2003}:twisted_rightwards_arrows: {}\u{2003}:repeat: {}",
-            if state.shuffle { "On" } else { "Off" },
-            state.repeat.label()
-        );
+        description += &format!("\n\n{} **{percent}%**", volume_emoji(percent));
     }
 
+    let title = if state.is_some() {
+        "Dashboard"
+    } else {
+        "Now Playing"
+    };
+
     CreateEmbed::new()
-        .author(
-            CreateEmbedAuthor::new("Currently Playing")
-                .icon_url("https://spoticord.com/spotify-logo.png"),
-        )
+        .author(CreateEmbedAuthor::new(title).icon_url("https://spoticord.com/spotify-logo.png"))
         .description(description)
         .thumbnail(playback_info.thumbnail())
         .footer(
@@ -580,50 +640,65 @@ fn build_embed(playback_info: &PlaybackInfo, owner: &User, state: Option<&Player
         .color(Colors::Info)
 }
 
-/// Build the message components (button rows). The compact layout has a single
-/// media-control row; the full dashboard adds a second row with shuffle, volume
-/// and Jam controls.
-fn build_components(id: u64, playing: bool, full: bool) -> Vec<CreateActionRow> {
+/// Build the message components (button rows). The compact layout (`state` is
+/// `None`) has a single media-control row; the full dashboard (`state` is
+/// `Some`) adds a second row with volume, shuffle, repeat and Jam controls.
+///
+/// Shuffle and repeat encode their on/off state through button colour (green =
+/// on) rather than text, and the repeat button's icon reflects the mode.
+fn build_components(id: u64, playing: bool, state: Option<&PlayerState>) -> Vec<CreateActionRow> {
     let prev_button = CreateButton::new(format!("{id}-prev"))
-        .style(ButtonStyle::Primary)
+        .style(ButtonStyle::Secondary)
         .label("⏮");
 
     let next_button = CreateButton::new(format!("{id}-next"))
-        .style(ButtonStyle::Primary)
+        .style(ButtonStyle::Secondary)
         .label("⏭");
 
     let pause_button = CreateButton::new(format!("{id}-pause"))
-        .style(if playing {
-            ButtonStyle::Danger
+        .style(ButtonStyle::Primary)
+        .label(if playing {
+            "⏸️ Pause"
         } else {
-            ButtonStyle::Success
-        })
-        .label(if playing { "Pause" } else { "Play" });
+            "▶️ Play"
+        });
 
     let media_row = CreateActionRow::Buttons(vec![prev_button, pause_button, next_button]);
 
-    if !full {
+    let Some(state) = state else {
         return vec![media_row];
-    }
+    };
 
     let vol_down_button = CreateButton::new(format!("{id}-voldown"))
         .style(ButtonStyle::Secondary)
-        .label("🔉");
+        .label("🔉 –");
 
     let vol_up_button = CreateButton::new(format!("{id}-volup"))
         .style(ButtonStyle::Secondary)
-        .label("🔊");
+        .label("🔊 +");
 
     let shuffle_button = CreateButton::new(format!("{id}-shuffle"))
-        .style(ButtonStyle::Secondary)
+        .style(if state.shuffle {
+            ButtonStyle::Success
+        } else {
+            ButtonStyle::Secondary
+        })
         .label("🔀");
 
     let repeat_button = CreateButton::new(format!("{id}-repeat"))
-        .style(ButtonStyle::Secondary)
-        .label("🔁");
+        .style(if state.repeat == RepeatMode::Off {
+            ButtonStyle::Secondary
+        } else {
+            ButtonStyle::Success
+        })
+        .label(if state.repeat == RepeatMode::Track {
+            "🔂"
+        } else {
+            "🔁"
+        });
 
     let jam_button = CreateButton::new(format!("{id}-jam"))
-        .style(ButtonStyle::Success)
+        .style(ButtonStyle::Primary)
         .label("🎉 Jam");
 
     let extra_row = CreateActionRow::Buttons(vec![
