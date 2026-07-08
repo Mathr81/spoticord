@@ -31,3 +31,18 @@ pub fn device_name() -> &'static str {
 pub fn cache_dir() -> &'static str {
     &env::CACHE_DIR
 }
+
+/// Your Spotify Developer app's client id (for the Web API), if configured.
+pub fn spotify_client_id() -> Option<&'static str> {
+    env::SPOTIFY_CLIENT_ID.as_deref()
+}
+
+/// Your Spotify Developer app's client secret (for the Web API), if configured.
+pub fn spotify_client_secret() -> Option<&'static str> {
+    env::SPOTIFY_CLIENT_SECRET.as_deref()
+}
+
+/// The redirect URI used for the one-time Web API authorization.
+pub fn spotify_redirect_uri() -> &'static str {
+    &env::SPOTIFY_REDIRECT_URI
+}

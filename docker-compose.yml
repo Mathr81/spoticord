@@ -8,6 +8,12 @@
 # The first launch prints a Spotify authorization URL: open it once and approve.
 # The reusable credentials are then saved to the `spoticord-data` volume, so
 # later restarts sign in automatically.
+#
+# If you set SPOTIFY_CLIENT_ID/SECRET in .env (to enable /play and /queue), the
+# first launch prints a SECOND authorization URL for the Web API — approve that
+# one too; its token is cached to the same volume. Both redirects go to
+# 127.0.0.1:8898, so you must be able to reach that port from your browser
+# (run it locally, or SSH-tunnel with `-L 8898:localhost:8898`).
 
 services:
   spoticord:

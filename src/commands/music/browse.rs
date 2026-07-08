@@ -1,7 +1,7 @@
 //! Shared helpers for the search-driven `/play` and `/queue` commands.
 
 use serenity::all::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed};
-use spoticord_player::TrackResult;
+use spoticord_spotify::TrackResult;
 use spoticord_utils::discord::Colors;
 
 /// Format a track duration (in milliseconds) as `m:ss`.
@@ -12,6 +12,18 @@ fn duration(ms: u32) -> String {
 /// Parse the selected result index out of a `trk-{index}` button custom id.
 pub fn parse_index(custom_id: &str) -> Option<usize> {
     custom_id.strip_prefix("trk-")?.parse().ok()
+}
+
+/// Embed shown when the Spotify Web API (search/queue) isn't configured.
+pub fn not_configured_embed() -> CreateEmbed {
+    CreateEmbed::new()
+        .title("Spotify search isn't set up")
+        .description(
+            "`/play` and `/queue` need your own Spotify app.\n\
+             Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in the bot's environment, \
+             then restart it once to authorize.",
+        )
+        .color(Colors::Error)
 }
 
 /// Build an embed listing search results, prefixed with a subtitle.

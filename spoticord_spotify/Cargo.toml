@@ -1,0 +1,19 @@
+[package]
+name = "spoticord_spotify"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+librespot = { version = "0.8.0", default-features = false, features = [
+    "rustls-tls-webpki-roots",
+] }
+tokio = { version = "1.41.1", features = ["net", "io-util", "sync", "time"] }
+http = "1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+urlencoding = "2"
+base64 = "0.22"
+anyhow = "1.0.93"
+log = "0.4.22"

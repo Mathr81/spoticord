@@ -37,11 +37,22 @@ pub async fn play(
         return Ok(());
     };
 
+    let Some(spotify) = manager.spotify() else {
+        ctx.send(
+            CreateReply::default()
+                .embed(browse::not_configured_embed())
+                .ephemeral(true),
+        )
+        .await?;
+
+        return Ok(());
+    };
+
     ctx.defer().await?;
 
     let player = session.player().await?;
 
-    let results = match player.search(&query).await? {
+    let results = match spotify.search(&query).await {
         Ok(results) => results,
         Err(why) => {
             ctx.send(
@@ -49,7 +60,7 @@ pub async fn play(
                     .embed(
                         CreateEmbed::new()
                             .title("Search failed")
-                            .description(why)
+                            .description(why.to_string())
                             .color(Colors::Error),
                     )
                     .ephemeral(true),

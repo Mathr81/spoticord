@@ -40,6 +40,38 @@ async fn main() {
         }
     };
 
+    // Optionally set up the Spotify Web API client (search + queue), which needs
+    // your own Spotify Developer app. When the app credentials aren't configured,
+    // `/play` and `/queue` are simply unavailable.
+    let spotify = match (
+        spoticord_config::spotify_client_id(),
+        spoticord_config::spotify_client_secret(),
+    ) {
+        (Some(client_id), Some(client_secret)) => {
+            match spoticord_spotify::WebApi::init(
+                client_id.to_string(),
+                client_secret.to_string(),
+                spoticord_config::spotify_redirect_uri().to_string(),
+                std::path::PathBuf::from(spoticord_config::cache_dir()),
+            )
+            .await
+            {
+                Ok(web_api) => Some(web_api),
+                Err(why) => {
+                    error!("Failed to initialize the Spotify Web API client: {why:?}");
+                    error!("/play and /queue will be unavailable. Check SPOTIFY_CLIENT_ID/SECRET and the redirect URI.");
+                    None
+                }
+            }
+        }
+        _ => {
+            info!(
+                "No Spotify app configured (SPOTIFY_CLIENT_ID/SECRET); /play and /queue are disabled."
+            );
+            None
+        }
+    };
+
     // Set up bot
     let framework = Framework::builder()
         .setup(move |ctx, ready, framework| {
@@ -50,6 +82,7 @@ async fn main() {
                 credentials,
                 cache,
                 spoticord_config::device_name(),
+                spotify,
             ))
         })
         .options(bot::framework_opts())

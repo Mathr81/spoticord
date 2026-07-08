@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.4.0 | July 8th 2026
+
+- **`/play` and `/queue` now work through your own Spotify app.** Spotify blocks
+  the public Web API (search, queue) for the token librespot provides — it 403s,
+  then 429s — because that token is only meant for Spotify's internal API. So
+  search and queue now use a proper user token from a Spotify Developer app you
+  own:
+  - Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` (see `.env.example`) and
+    register the redirect URI `http://127.0.0.1:8898/callback` on your app.
+  - On first launch the bot prints a second authorization URL; approve it once
+    and the resulting user token (with its refresh token) is cached to the data
+    volume and refreshed automatically.
+  - When no app is configured, `/play` and `/queue` are simply unavailable and
+    say so, instead of erroring.
+- New `spoticord_spotify` crate implementing the Web API client (Authorization
+  Code flow + refresh, search, add-to-queue, read-queue), reusing librespot's
+  HTTP/TLS stack. The player no longer performs any Web API calls; `/play` still
+  plays the chosen track through librespot's internal Connect load, so playback
+  itself never depended on the Web API.
+
 ## 3.3.0 | July 8th 2026
 
 - Added **`/dashboard`**: a rich, auto-updating playback dashboard. It shows the

@@ -4461,7 +4461,7 @@ dependencies = [
 
 [[package]]
 name = "spoticord"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -4475,13 +4475,14 @@ dependencies = [
  "spoticord_config",
  "spoticord_player",
  "spoticord_session",
+ "spoticord_spotify",
  "spoticord_utils",
  "tokio",
 ]
 
 [[package]]
 name = "spoticord_audio"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "librespot",
  "songbird",
@@ -4491,17 +4492,16 @@ dependencies = [
 
 [[package]]
 name = "spoticord_config"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "serenity",
 ]
 
 [[package]]
 name = "spoticord_player"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "anyhow",
- "bytes",
  "hex",
  "http",
  "librespot",
@@ -4512,12 +4512,11 @@ dependencies = [
  "spoticord_utils",
  "symphonia",
  "tokio",
- "urlencoding",
 ]
 
 [[package]]
 name = "spoticord_session"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "librespot",
@@ -4527,14 +4526,32 @@ dependencies = [
  "songbird",
  "spoticord_config",
  "spoticord_player",
+ "spoticord_spotify",
  "spoticord_utils",
  "thiserror 2.0.18",
  "tokio",
 ]
 
 [[package]]
+name = "spoticord_spotify"
+version = "3.4.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "http",
+ "librespot",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
 name = "spoticord_utils"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "image",

@@ -6,6 +6,7 @@ use log::{debug, info};
 use poise::{serenity_prelude, Framework, FrameworkContext, FrameworkOptions};
 use serenity::all::{ActivityData, FullEvent, Ready, ShardManager};
 use spoticord_session::manager::SessionManager;
+use spoticord_spotify::WebApi;
 
 use crate::commands;
 
@@ -47,6 +48,7 @@ pub async fn setup(
     credentials: Credentials,
     cache: Cache,
     device_name: &'static str,
+    spotify: Option<Arc<WebApi>>,
 ) -> Result<Data> {
     info!("Successfully logged in as {}", ready.user.name);
 
@@ -65,7 +67,7 @@ pub async fn setup(
         .await
         .ok_or_else(|| anyhow!("Songbird was not registered during setup"))?;
 
-    let manager = SessionManager::new(songbird, credentials, cache, device_name);
+    let manager = SessionManager::new(songbird, credentials, cache, device_name, spotify);
 
     tokio::spawn(shutdown_handler(
         manager.clone(),

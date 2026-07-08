@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 spoticord_config = { path = "../spoticord_config" }
 spoticord_player = { path = "../spoticord_player" }
+spoticord_spotify = { path = "../spoticord_spotify" }
 spoticord_utils = { path = "../spoticord_utils" }
 
 tokio = { version = "1.41.1", features = ["full"] }
