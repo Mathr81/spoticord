@@ -64,12 +64,14 @@ pub async fn queue(
         };
 
         if tracks.is_empty() {
-            ctx.send(CreateReply::default().embed(
-                CreateEmbed::new()
-                    .title("🎶 Up next")
-                    .description("The queue is empty.")
-                    .color(Colors::Info),
-            ))
+            ctx.send(
+                CreateReply::default().embed(
+                    CreateEmbed::new()
+                        .title("🎶 Up next")
+                        .description("The queue is empty.")
+                        .color(Colors::Info),
+                ),
+            )
             .await?;
         } else {
             ctx.send(CreateReply::default().embed(browse::queue_embed(&tracks)))
@@ -142,11 +144,17 @@ pub async fn queue(
         };
 
         _ = press
-            .create_response(ctx.serenity_context(), CreateInteractionResponse::Acknowledge)
+            .create_response(
+                ctx.serenity_context(),
+                CreateInteractionResponse::Acknowledge,
+            )
             .await;
 
         let content = match player.add_to_queue(track.uri.clone()).await? {
-            Ok(()) => format!("➕ Added **{}** — {} to the queue", track.name, track.artists),
+            Ok(()) => format!(
+                "➕ Added **{}** — {} to the queue",
+                track.name, track.artists
+            ),
             Err(why) => format!("Could not add to the queue: {why}"),
         };
 
@@ -161,7 +169,10 @@ pub async fn queue(
     }
 
     _ = message
-        .edit(ctx.serenity_context(), EditMessage::new().components(vec![]))
+        .edit(
+            ctx.serenity_context(),
+            EditMessage::new().components(vec![]),
+        )
         .await;
 
     Ok(())

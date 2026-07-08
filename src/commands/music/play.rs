@@ -102,7 +102,10 @@ pub async fn play(
             player.play_uri(track.uri.clone()).await;
 
             _ = press
-                .create_response(ctx.serenity_context(), CreateInteractionResponse::Acknowledge)
+                .create_response(
+                    ctx.serenity_context(),
+                    CreateInteractionResponse::Acknowledge,
+                )
                 .await;
             _ = message
                 .edit(
@@ -119,7 +122,10 @@ pub async fn play(
 
     // Timed out without a selection: drop the now-dead buttons.
     _ = message
-        .edit(ctx.serenity_context(), EditMessage::new().components(vec![]))
+        .edit(
+            ctx.serenity_context(),
+            EditMessage::new().components(vec![]),
+        )
         .await;
 
     Ok(())

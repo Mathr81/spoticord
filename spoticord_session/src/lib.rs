@@ -125,23 +125,22 @@ impl Session {
             call.add_global_event(Event::Core(CoreEvent::ClientDisconnect), handle.clone());
         }
 
-        let (player, events) = match Player::create(credentials, cache, call.clone(), device_name)
-            .await
-        {
-            Ok(player) => player,
-            Err(why) => {
-                // Leave call on error, otherwise bot will be stuck in call forever until manually disconnected or taken over
-                _ = call.lock().await.leave().await;
+        let (player, events) =
+            match Player::create(credentials, cache, call.clone(), device_name).await {
+                Ok(player) => player,
+                Err(why) => {
+                    // Leave call on error, otherwise bot will be stuck in call forever until manually disconnected or taken over
+                    _ = call.lock().await.leave().await;
 
-                error!("Failed to create player: {why}");
+                    error!("Failed to create player: {why}");
 
-                if why.kind == ErrorKind::PermissionDenied {
-                    return Err(AuthenticationFailed);
+                    if why.kind == ErrorKind::PermissionDenied {
+                        return Err(AuthenticationFailed);
+                    }
+
+                    return Err(why.into());
                 }
-
-                return Err(why.into());
-            }
-        };
+            };
 
         let mut session = Self {
             session_manager,
