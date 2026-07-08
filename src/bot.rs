@@ -23,11 +23,15 @@ pub fn framework_opts() -> FrameworkOptions<Data, anyhow::Error> {
             commands::music::join(),
             commands::music::disconnect(),
             commands::music::stop(),
+            commands::music::play(),
+            commands::music::queue(),
             commands::music::playing(),
+            commands::music::dashboard(),
             commands::music::lyrics(),
             commands::music::jam(),
             commands::music::volume(),
             commands::music::shuffle(),
+            commands::music::repeat(),
         ],
         event_handler: |ctx, event, framework, data| {
             Box::pin(event_handler(ctx, event, framework, data))

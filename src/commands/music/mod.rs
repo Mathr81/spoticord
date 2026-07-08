@@ -1,17 +1,26 @@
+mod browse;
+mod dashboard;
 mod disconnect;
 mod jam;
 mod join;
 mod lyrics;
+mod play;
 mod playing;
+mod queue;
+mod repeat;
 mod shuffle;
 mod stop;
 mod volume;
 
+pub use dashboard::*;
 pub use disconnect::*;
 pub use jam::*;
 pub use join::*;
 pub use lyrics::*;
+pub use play::*;
 pub use playing::*;
+pub use queue::*;
+pub use repeat::*;
 pub use shuffle::*;
 pub use stop::*;
 pub use volume::*;

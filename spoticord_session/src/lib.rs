@@ -35,6 +35,7 @@ pub enum SessionCommand {
         SessionHandle,
         CommandInteraction,
         playback_embed::UpdateBehavior,
+        bool,
     ),
     CreateLyricsEmbed(SessionHandle, CommandInteraction),
 
@@ -223,8 +224,8 @@ impl Session {
             SessionCommand::GetPlayer(sender) => _ = sender.send(self.player.clone()),
             SessionCommand::GetActive(sender) => _ = sender.send(self.active),
 
-            SessionCommand::CreatePlaybackEmbed(handle, interaction, behavior) => {
-                match PlaybackEmbed::create(self, handle, interaction, behavior).await {
+            SessionCommand::CreatePlaybackEmbed(handle, interaction, behavior, full) => {
+                match PlaybackEmbed::create(self, handle, interaction, behavior, full).await {
                     Ok(opt_handle) => {
                         self.playback_embed = opt_handle;
                     }
@@ -509,6 +510,28 @@ impl SessionHandle {
                 self.clone(),
                 interaction.to_owned(),
                 behavior,
+                false,
+            ))
+            .await?;
+
+        Ok(())
+    }
+
+    /// Create a full-featured "dashboard" embed as a response to an interaction.
+    ///
+    /// This behaves like [`Self::create_playback_embed`], but renders the richer
+    /// layout with volume, shuffle and Jam controls.
+    pub async fn create_dashboard_embed(
+        &self,
+        interaction: &CommandInteraction,
+        behavior: playback_embed::UpdateBehavior,
+    ) -> anyhow::Result<()> {
+        self.commands
+            .send(SessionCommand::CreatePlaybackEmbed(
+                self.clone(),
+                interaction.to_owned(),
+                behavior,
+                true,
             ))
             .await?;
 

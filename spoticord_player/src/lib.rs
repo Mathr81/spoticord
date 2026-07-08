@@ -1,9 +1,10 @@
 pub mod info;
 
 use anyhow::Result;
+use bytes::Bytes;
 use info::PlaybackInfo;
 use librespot::{
-    connect::{ConnectConfig, Spirc},
+    connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc},
     core::{
         cache::Cache, error::ErrorKind, http_client::HttpClientError, Session as SpotifySession,
         SessionConfig,
@@ -28,6 +29,65 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 
+/// Default playback volume (75% of `u16::MAX`), matching the value handed to
+/// librespot's `ConnectConfig` when the player starts.
+pub const DEFAULT_VOLUME: u16 = 49151;
+
+/// Repeat mode, matching Spotify's three states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RepeatMode {
+    #[default]
+    Off,
+    /// Repeat the whole context (playlist/album/queue).
+    Context,
+    /// Repeat the current track.
+    Track,
+}
+
+impl RepeatMode {
+    /// The next mode when cycling through the dashboard button (Off → Context → Track → Off).
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Context,
+            Self::Context => Self::Track,
+            Self::Track => Self::Off,
+        }
+    }
+
+    /// A short human-readable label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Context => "All",
+            Self::Track => "One",
+        }
+    }
+}
+
+/// A single track returned by a Spotify search or found in the play queue.
+#[derive(Debug, Clone)]
+pub struct TrackResult {
+    pub name: String,
+    pub artists: String,
+    pub album: String,
+    pub uri: String,
+    pub duration_ms: u32,
+}
+
+/// Web API scopes needed for search, queue and playback-state endpoints.
+const WEB_API_SCOPES: &str = "user-read-playback-state,user-modify-playback-state";
+
+/// A snapshot of the controllable player state that isn't part of [`PlaybackInfo`].
+///
+/// These values reflect the commands Spoticord has issued; they may drift if the
+/// same account is controlled from elsewhere (e.g. the Spotify app directly).
+#[derive(Debug, Clone, Copy)]
+pub struct PlayerState {
+    pub volume: u16,
+    pub shuffle: bool,
+    pub repeat: RepeatMode,
+}
+
 #[derive(Debug)]
 enum PlayerCommand {
     NextTrack,
@@ -36,8 +96,15 @@ enum PlayerCommand {
     Play,
     SetVolume(u16),
     SetShuffle(bool),
+    SetRepeat(RepeatMode),
+    PlayUri(String),
+
+    Search(String, oneshot::Sender<Result<Vec<TrackResult>, String>>),
+    AddToQueue(String, oneshot::Sender<Result<(), String>>),
+    GetQueue(oneshot::Sender<Result<Vec<TrackResult>, String>>),
 
     GetPlaybackInfo(oneshot::Sender<Option<PlaybackInfo>>),
+    GetState(oneshot::Sender<PlayerState>),
     GetLyrics(oneshot::Sender<Option<Lyrics>>),
     CreateJam(oneshot::Sender<Result<String, String>>),
 
@@ -60,6 +127,9 @@ pub struct Player {
     stream: Stream,
 
     playback_info: Option<PlaybackInfo>,
+    volume: u16,
+    shuffle: bool,
+    repeat: RepeatMode,
 
     // Communication
     events: mpsc::Sender<PlayerEvent>,
@@ -124,7 +194,7 @@ impl Player {
             match Spirc::new(
                 ConnectConfig {
                     name: device_name.clone(),
-                    initial_volume: (0.75f32 * u16::MAX as f32) as u16,
+                    initial_volume: DEFAULT_VOLUME,
                     ..Default::default()
                 },
                 session.clone(),
@@ -168,6 +238,9 @@ impl Player {
             stream,
 
             playback_info: None,
+            volume: DEFAULT_VOLUME,
+            shuffle: false,
+            repeat: RepeatMode::Off,
 
             events: event_tx.clone(),
 
@@ -228,10 +301,53 @@ impl Player {
             PlayerCommand::PreviousTrack => _ = self.spirc.prev(),
             PlayerCommand::Pause => _ = self.spirc.pause(),
             PlayerCommand::Play => _ = self.spirc.play(),
-            PlayerCommand::SetVolume(volume) => _ = self.spirc.set_volume(volume),
-            PlayerCommand::SetShuffle(shuffle) => _ = self.spirc.shuffle(shuffle),
+            PlayerCommand::SetVolume(volume) => {
+                self.volume = volume;
+                _ = self.spirc.set_volume(volume);
+            }
+            PlayerCommand::SetShuffle(shuffle) => {
+                self.shuffle = shuffle;
+                _ = self.spirc.shuffle(shuffle);
+            }
+            PlayerCommand::SetRepeat(mode) => {
+                self.repeat = mode;
+                match mode {
+                    RepeatMode::Off => {
+                        _ = self.spirc.repeat_track(false);
+                        _ = self.spirc.repeat(false);
+                    }
+                    RepeatMode::Context => {
+                        _ = self.spirc.repeat_track(false);
+                        _ = self.spirc.repeat(true);
+                    }
+                    RepeatMode::Track => {
+                        _ = self.spirc.repeat_track(true);
+                    }
+                }
+            }
+
+            PlayerCommand::PlayUri(uri) => {
+                let request = LoadRequest::from_tracks(
+                    vec![uri],
+                    LoadRequestOptions {
+                        start_playing: true,
+                        ..Default::default()
+                    },
+                );
+                _ = self.spirc.load(request);
+            }
+            PlayerCommand::Search(query, tx) => _ = tx.send(self.search_tracks(&query).await),
+            PlayerCommand::AddToQueue(uri, tx) => _ = tx.send(self.add_to_queue(&uri).await),
+            PlayerCommand::GetQueue(tx) => _ = tx.send(self.get_queue().await),
 
             PlayerCommand::GetPlaybackInfo(tx) => _ = tx.send(self.playback_info.clone()),
+            PlayerCommand::GetState(tx) => {
+                _ = tx.send(PlayerState {
+                    volume: self.volume,
+                    shuffle: self.shuffle,
+                    repeat: self.repeat,
+                })
+            }
             PlayerCommand::GetLyrics(tx) => self.get_lyrics(tx).await,
             PlayerCommand::CreateJam(tx) => _ = tx.send(self.create_jam().await),
 
@@ -324,6 +440,89 @@ impl Player {
         _ = tx.send(Some(lyrics));
     }
 
+    /// Perform an authenticated request against Spotify's Web API (api.spotify.com)
+    /// using a token from librespot's token provider, returning the parsed JSON body
+    /// (or `Null` for empty `204` responses).
+    async fn web_api_request(
+        &self,
+        method: http::Method,
+        url: &str,
+    ) -> Result<serde_json::Value, String> {
+        let token = self
+            .session
+            .token_provider()
+            .get_token(WEB_API_SCOPES)
+            .await
+            .map_err(|why| format!("Could not get a Spotify token: {why}"))?;
+
+        let request = http::Request::builder()
+            .method(method)
+            .uri(url)
+            .header("Authorization", format!("Bearer {}", token.access_token))
+            .body(Bytes::new())
+            .map_err(|why| format!("Could not build request: {why}"))?;
+
+        let bytes = self
+            .session
+            .http_client()
+            .request_body(request)
+            .await
+            .map_err(|why| format!("Spotify API request failed: {why}"))?;
+
+        if bytes.is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
+
+        serde_json::from_slice(&bytes)
+            .map_err(|why| format!("Could not parse Spotify response: {why}"))
+    }
+
+    /// Search Spotify for tracks matching `query` (top 5 results).
+    async fn search_tracks(&self, query: &str) -> Result<Vec<TrackResult>, String> {
+        let url = format!(
+            "https://api.spotify.com/v1/search?type=track&limit=5&q={}",
+            urlencoding::encode(query)
+        );
+
+        let json = self.web_api_request(http::Method::GET, &url).await?;
+        let items = json
+            .get("tracks")
+            .and_then(|tracks| tracks.get("items"))
+            .and_then(|items| items.as_array())
+            .ok_or_else(|| "Unexpected search response from Spotify".to_owned())?;
+
+        Ok(items.iter().filter_map(parse_track).collect())
+    }
+
+    /// Add a track (by `spotify:track:...` URI) to the play queue.
+    async fn add_to_queue(&self, uri: &str) -> Result<(), String> {
+        let url = format!(
+            "https://api.spotify.com/v1/me/player/queue?uri={}",
+            urlencoding::encode(uri)
+        );
+
+        self.web_api_request(http::Method::POST, &url).await?;
+
+        Ok(())
+    }
+
+    /// Fetch the upcoming tracks in the play queue.
+    async fn get_queue(&self) -> Result<Vec<TrackResult>, String> {
+        let json = self
+            .web_api_request(
+                http::Method::GET,
+                "https://api.spotify.com/v1/me/player/queue",
+            )
+            .await?;
+
+        let queue = json
+            .get("queue")
+            .and_then(|queue| queue.as_array())
+            .ok_or_else(|| "Unexpected queue response from Spotify".to_owned())?;
+
+        Ok(queue.iter().filter_map(parse_track).collect())
+    }
+
     /// Create (or fetch the existing) Spotify Jam for the bot's playback device and
     /// return a shareable join link.
     ///
@@ -383,6 +582,40 @@ impl Drop for Player {
     }
 }
 
+/// Parse a Spotify Web API track object into a [`TrackResult`].
+fn parse_track(item: &serde_json::Value) -> Option<TrackResult> {
+    let name = item.get("name")?.as_str()?.to_owned();
+    let uri = item.get("uri")?.as_str()?.to_owned();
+
+    let artists = item
+        .get("artists")?
+        .as_array()?
+        .iter()
+        .filter_map(|artist| artist.get("name").and_then(|name| name.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let album = item
+        .get("album")
+        .and_then(|album| album.get("name"))
+        .and_then(|name| name.as_str())
+        .unwrap_or_default()
+        .to_owned();
+
+    let duration_ms = item
+        .get("duration_ms")
+        .and_then(|duration| duration.as_u64())
+        .unwrap_or(0) as u32;
+
+    Some(TrackResult {
+        name,
+        artists,
+        album,
+        uri,
+        duration_ms,
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct PlayerHandle {
     commands: mpsc::Sender<PlayerCommand>,
@@ -419,11 +652,64 @@ impl PlayerHandle {
         _ = self.commands.send(PlayerCommand::SetShuffle(shuffle)).await;
     }
 
+    /// Set the Spotify repeat mode.
+    pub async fn set_repeat(&self, mode: RepeatMode) {
+        _ = self.commands.send(PlayerCommand::SetRepeat(mode)).await;
+    }
+
+    /// Immediately start playing a track by its `spotify:track:...` URI.
+    pub async fn play_uri(&self, uri: impl Into<String>) {
+        _ = self.commands.send(PlayerCommand::PlayUri(uri.into())).await;
+    }
+
+    /// Search Spotify for tracks. The inner `Result` carries a user-facing error
+    /// message when the request fails.
+    pub async fn search(
+        &self,
+        query: impl Into<String>,
+    ) -> Result<std::result::Result<Vec<TrackResult>, String>> {
+        let (tx, rx) = oneshot::channel();
+        self.commands
+            .send(PlayerCommand::Search(query.into(), tx))
+            .await?;
+
+        Ok(rx.await?)
+    }
+
+    /// Add a track to the play queue by its `spotify:track:...` URI.
+    pub async fn add_to_queue(
+        &self,
+        uri: impl Into<String>,
+    ) -> Result<std::result::Result<(), String>> {
+        let (tx, rx) = oneshot::channel();
+        self.commands
+            .send(PlayerCommand::AddToQueue(uri.into(), tx))
+            .await?;
+
+        Ok(rx.await?)
+    }
+
+    /// Fetch the upcoming tracks in the play queue.
+    pub async fn get_queue(&self) -> Result<std::result::Result<Vec<TrackResult>, String>> {
+        let (tx, rx) = oneshot::channel();
+        self.commands.send(PlayerCommand::GetQueue(tx)).await?;
+
+        Ok(rx.await?)
+    }
+
     pub async fn playback_info(&self) -> Result<Option<PlaybackInfo>> {
         let (tx, rx) = oneshot::channel();
         self.commands
             .send(PlayerCommand::GetPlaybackInfo(tx))
             .await?;
+
+        Ok(rx.await?)
+    }
+
+    /// Retrieve the current volume and shuffle state.
+    pub async fn state(&self) -> Result<PlayerState> {
+        let (tx, rx) = oneshot::channel();
+        self.commands.send(PlayerCommand::GetState(tx)).await?;
 
         Ok(rx.await?)
     }
