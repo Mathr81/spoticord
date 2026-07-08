@@ -4,8 +4,8 @@ use poise::ChoiceParameter;
 use serenity::{
     all::{
         ButtonStyle, CommandInteraction, ComponentInteraction, ComponentInteractionCollector,
-        Context, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter,
-        CreateInteractionResponse, CreateInteractionResponseFollowup,
+        Context, CreateActionRow, CreateAttachment, CreateButton, CreateEmbed, CreateEmbedAuthor,
+        CreateEmbedFooter, CreateInteractionResponse, CreateInteractionResponseFollowup,
         CreateInteractionResponseMessage, CreateMessage, EditMessage, Message, User,
     },
     futures::StreamExt,
@@ -291,15 +291,14 @@ impl PlaybackEmbed {
             Some("jam") => {
                 acknowledge(&self.ctx, &press).await;
 
-                let message = match player.create_jam().await {
-                    Ok(Ok(url)) => format!(
-                        "🎉 **Spotify Jam** — anyone with this link can join and control the music:\n{url}"
-                    ),
-                    Ok(Err(why)) => why,
-                    Err(why) => format!("Failed to start a Jam: {why}"),
-                };
-
-                ephemeral_followup(&self.ctx, &press, message).await;
+                match player.create_jam().await {
+                    Ok(Ok(url)) => jam_followup(&self.ctx, &press, &url).await,
+                    Ok(Err(why)) => ephemeral_followup(&self.ctx, &press, why).await,
+                    Err(why) => {
+                        ephemeral_followup(&self.ctx, &press, format!("Failed to start a Jam: {why}"))
+                            .await
+                    }
+                }
                 return;
             }
 
@@ -477,6 +476,29 @@ async fn ephemeral_followup(
                 .ephemeral(true),
         )
         .await;
+}
+
+/// Send the Jam link as an ephemeral embed, with a scannable QR code attached
+/// when it can be rendered.
+async fn jam_followup(ctx: &Context, press: &ComponentInteraction, url: &str) {
+    let mut embed = CreateEmbed::new()
+        .title("🎉 Spotify Jam")
+        .description(format!(
+            "Anyone with this link can join and control the music:\n{url}\n\nOr scan the code below."
+        ))
+        .color(Colors::Info);
+
+    let mut followup = CreateInteractionResponseFollowup::new().ephemeral(true);
+
+    match spoticord_utils::qr_png(url) {
+        Ok(png) => {
+            embed = embed.image("attachment://jam-qr.png");
+            followup = followup.add_file(CreateAttachment::bytes(png, "jam-qr.png"));
+        }
+        Err(why) => error!("Failed to render Jam QR code: {why}"),
+    }
+
+    _ = press.create_followup(ctx, followup.embed(embed)).await;
 }
 
 fn build_embed(playback_info: &PlaybackInfo, owner: &User, state: Option<&PlayerState>) -> CreateEmbed {

@@ -17,6 +17,18 @@
 - Added **`/repeat`** (Off / All / One), mirroring the new dashboard repeat
   button. The player now tracks volume, shuffle and repeat state so the dashboard
   can display it.
+- Added **`/play <query>`**: searches Spotify and shows the top results with a row
+  of numbered buttons — click one to play it immediately.
+- Added **`/queue`**: with a query it searches and shows numbered buttons that add
+  a track to the play queue (you can add several from one search); without a query
+  it shows the current "up next" list.
+- `/jam` (and the dashboard's 🎉 Jam button) now also attaches a **scannable QR
+  code** of the Jam link, like the Spotify app's share screen.
+
+  Search, queueing and playback are driven through Spotify's Web API using a token
+  from librespot; they require the bot to be the active Spotify Connect device
+  (i.e. selected as the playback target), which is the normal way Spoticord is
+  used.
 
 ## 3.2.0 | July 7th 2026
 
