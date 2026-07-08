@@ -347,19 +347,32 @@ impl Player {
 
         trace!("Jam response: {json}");
 
-        if let Some(url) = json.get("join_session_url").and_then(|value| value.as_str()) {
-            return Ok(url.to_owned());
-        }
-
-        if let Some(token) = json
+        // The shareable link is https://open.spotify.com/socialsession/{token}.
+        // Spotify returns the token either directly as `join_session_token`, or as
+        // the last path segment of an internal `hm://.../sessions/join/{token}` URI
+        // (exposed as `join_session_url` / `join_session_uri`).
+        let token = json
             .get("join_session_token")
             .and_then(|value| value.as_str())
-        {
-            return Ok(format!("https://open.spotify.com/socialsession/{token}"));
-        }
+            .map(str::to_owned)
+            .or_else(|| {
+                json.get("join_session_url")
+                    .or_else(|| json.get("join_session_uri"))
+                    .and_then(|value| value.as_str())
+                    .and_then(|uri| uri.rsplit('/').next())
+                    .map(str::to_owned)
+            });
 
-        error!("Unexpected Jam response from Spotify: {json}");
-        Err("Spotify did not return a Jam link. Your account may not support Jams.".to_owned())
+        match token {
+            Some(token) if !token.is_empty() => {
+                Ok(format!("https://open.spotify.com/socialsession/{token}"))
+            }
+            _ => {
+                error!("Unexpected Jam response from Spotify: {json}");
+                Err("Spotify did not return a Jam link. Your account may not support Jams."
+                    .to_owned())
+            }
+        }
     }
 }
 
