@@ -22,8 +22,9 @@ services:
       - spoticord-data:/data
     # Only needed for the one-time OAuth login: lets you reach the redirect
     # server the bot spins up. You can remove this after the first sign-in.
-    ports:
-      - "8898:8898"
-
+    # ports:
+    #  - "8898:8898"
+    network_mode: host
+    
 volumes:
   spoticord-data:

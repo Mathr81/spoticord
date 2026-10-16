@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use librespot::{
-    core::SpotifyId,
+    core::SpotifyUri,
     metadata::{
         artist::ArtistsWithRole,
         audio::{AudioItem, UniqueFields},
@@ -28,14 +28,14 @@ impl PlaybackInfo {
         }
     }
 
-    pub fn track_id(&self) -> SpotifyId {
-        self.audio_item.track_id
+    pub fn track_id(&self) -> SpotifyUri {
+        self.audio_item.track_id.clone()
     }
 
     pub fn track_id_string(&self) -> String {
         self.audio_item
             .track_id
-            .to_base62()
+            .to_id()
             .expect("invalid spotify id")
     }
 
@@ -46,13 +46,13 @@ impl PlaybackInfo {
     pub fn artists(&self) -> Option<ArtistsWithRole> {
         let artists = match &self.audio_item.unique_fields {
             UniqueFields::Track { artists, .. } => artists.clone().0,
-            UniqueFields::Episode { .. } => None?,
+            UniqueFields::Episode { .. } | UniqueFields::Local { .. } => None?,
         };
 
         let mut seen = HashSet::new();
         let artists = artists
             .into_iter()
-            .filter(|item| seen.insert(item.id))
+            .filter(|item| seen.insert(item.id.clone()))
             .collect();
 
         Some(ArtistsWithRole(artists))
@@ -61,7 +61,7 @@ impl PlaybackInfo {
     pub fn show_name(&self) -> Option<String> {
         match &self.audio_item.unique_fields {
             UniqueFields::Episode { show_name, .. } => Some(show_name.to_string()),
-            UniqueFields::Track { .. } => None,
+            UniqueFields::Track { .. } | UniqueFields::Local { .. } => None,
         }
     }
 
@@ -69,16 +69,13 @@ impl PlaybackInfo {
         match &self.audio_item.unique_fields {
             UniqueFields::Episode { .. } => None,
             UniqueFields::Track { album, .. } => Some(album.to_string()),
+            UniqueFields::Local { album, .. } => album.clone(),
         }
     }
 
-    pub fn thumbnail(&self) -> String {
-        self.audio_item
-            .covers
-            .first()
-            .expect("spotify track missing cover image")
-            .url
-            .to_string()
+    /// Local files have no cover image
+    pub fn thumbnail(&self) -> Option<String> {
+        self.audio_item.covers.first().map(|cover| cover.url.clone())
     }
 
     pub fn duration(&self) -> u32 {
@@ -94,6 +91,8 @@ impl PlaybackInfo {
             UniqueFields::Track { .. } => {
                 format!("https://open.spotify.com/track/{}", self.track_id_string())
             }
+            // Local files have no web page, link to the Spotify URI instead
+            UniqueFields::Local { .. } => self.audio_item.uri.clone(),
         }
     }
 

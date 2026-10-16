@@ -38,11 +38,13 @@ pub fn resolve_credentials() -> Result<(Credentials, Cache)> {
     warn!("No cached Spotify credentials found, starting interactive OAuth login.");
     warn!("Open the URL printed below in a browser and approve access. This is only needed once.");
 
-    let token = librespot::oauth::get_access_token(
+    let token = librespot::oauth::OAuthClientBuilder::new(
         &SessionConfig::default().client_id,
         &format!("http://127.0.0.1:{OAUTH_PORT}/login"),
         OAUTH_SCOPES.to_vec(),
     )
+    .build()
+    .and_then(|client| client.get_access_token())
     .map_err(|why| anyhow::anyhow!("Spotify OAuth login failed: {why}"))?;
 
     Ok((Credentials::with_access_token(token.access_token), cache))

@@ -3,10 +3,10 @@ pub mod info;
 use anyhow::Result;
 use info::PlaybackInfo;
 use librespot::{
-    connect::{config::ConnectConfig, spirc::Spirc},
+    connect::{ConnectConfig, Spirc},
     core::{
         cache::Cache, error::ErrorKind, http_client::HttpClientError, Session as SpotifySession,
-        SessionConfig,
+        SessionConfig, SpotifyUri,
     },
     discovery::Credentials,
     metadata::Lyrics,
@@ -91,11 +91,14 @@ impl Player {
 
         // Create librespot audio streamer. Passing the cache lets librespot persist
         // the reusable credentials to disk, so we only need to authenticate once.
+        // Prefer the reusable credentials librespot saved to the cache: the OAuth access
+        // token we started with expires after an hour.
+        let credentials = cache.credentials().unwrap_or(credentials);
         let session = SpotifySession::new(SessionConfig::default(), Some(cache));
         let mixer = (mixer::find(Some("softvol")).expect("missing softvol mixer"))(MixerConfig {
             volume_ctrl: VolumeCtrl::Log(VolumeCtrl::DEFAULT_DB_RANGE),
             ..Default::default()
-        });
+        })?;
 
         let (tx_sink, rx_sink) = mpsc::unbounded_channel();
         let player = SpotifyPlayer::new(
@@ -120,7 +123,7 @@ impl Player {
             match Spirc::new(
                 ConnectConfig {
                     name: device_name.clone(),
-                    initial_volume: Some((0.75f32 * u16::MAX as f32) as u16),
+                    initial_volume: (0.75f32 * u16::MAX as f32) as u16,
                     ..Default::default()
                 },
                 session.clone(),
@@ -295,12 +298,14 @@ impl Player {
     ///
     /// This might return None if nothing is being played, or the current song does not have any lyrics.
     async fn get_lyrics(&self, tx: oneshot::Sender<Option<Lyrics>>) {
-        let Some(playback_info) = &self.playback_info else {
+        // Only Spotify-hosted tracks have lyrics (not episodes or local files)
+        let Some(SpotifyUri::Track { id }) = self.playback_info.as_ref().map(|p| p.track_id())
+        else {
             _ = tx.send(None);
             return;
         };
 
-        let lyrics = match Lyrics::get(&self.session, &playback_info.track_id()).await {
+        let lyrics = match Lyrics::get(&self.session, &id).await {
             Ok(lyrics) => lyrics,
             Err(why) => {
                 // Ignore 404 errors

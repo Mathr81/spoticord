@@ -395,7 +395,7 @@ fn build_embed(playback_info: &PlaybackInfo, owner: &User) -> CreateEmbed {
                 format!(
                     "[{}](https://open.spotify.com/artist/{})",
                     artist.name,
-                    artist.id.to_base62().expect("invalid artist")
+                    artist.id.to_id().expect("invalid artist")
                 )
             })
             .collect::<Vec<_>>()
@@ -415,7 +415,7 @@ fn build_embed(playback_info: &PlaybackInfo, owner: &User) -> CreateEmbed {
     description += "\n";
 
     let position = playback_info.current_position();
-    let index = position * 20 / playback_info.duration();
+    let index = position * 20 / playback_info.duration().max(1);
 
     description += if playback_info.playing() {
         "▶️ "
@@ -438,13 +438,18 @@ fn build_embed(playback_info: &PlaybackInfo, owner: &User) -> CreateEmbed {
         spoticord_utils::time_to_string(playback_info.duration() / 1000)
     );
 
-    CreateEmbed::new()
+    let mut embed = CreateEmbed::new()
         .author(
             CreateEmbedAuthor::new("Currently Playing")
                 .icon_url("https://spoticord.com/spotify-logo.png"),
         )
-        .description(description)
-        .thumbnail(playback_info.thumbnail())
+        .description(description);
+
+    if let Some(thumbnail) = playback_info.thumbnail() {
+        embed = embed.thumbnail(thumbnail);
+    }
+
+    embed
         .footer(
             CreateEmbedFooter::new(owner.global_name.as_ref().unwrap_or(&owner.name))
                 .icon_url(owner.face()),

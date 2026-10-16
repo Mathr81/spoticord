@@ -2,7 +2,7 @@ use std::{ops::ControlFlow, time::Duration};
 
 use anyhow::Result;
 use librespot::{
-    core::SpotifyId,
+    core::SpotifyUri,
     metadata::{
         lyrics::{Line, SyncType},
         Lyrics,
@@ -31,7 +31,7 @@ pub struct LyricsEmbed {
     ctx: Context,
     session: SessionHandle,
     message: Message,
-    track: SpotifyId,
+    track: SpotifyUri,
 
     lyrics: Option<Lyrics>,
     page: usize,
