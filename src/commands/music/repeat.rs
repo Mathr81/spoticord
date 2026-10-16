@@ -2,7 +2,6 @@ use anyhow::Result;
 use poise::{ChoiceParameter, CreateReply};
 use serenity::all::CreateEmbed;
 use spoticord_player::RepeatMode;
-use spoticord_session::manager::SessionQuery;
 use spoticord_utils::discord::Colors;
 
 use crate::bot::Context;
@@ -33,22 +32,7 @@ pub async fn repeat(
     ctx: Context<'_>,
     #[description = "Repeat mode"] mode: RepeatChoice,
 ) -> Result<()> {
-    let manager = ctx.data();
-    let guild = ctx.guild_id().expect("poise lied to me");
-
-    let Some(session) = manager.get_session(SessionQuery::Guild(guild)) else {
-        ctx.send(
-            CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("Cannot change repeat")
-                        .description("I'm currently not playing any music in this server.")
-                        .color(Colors::Error),
-                )
-                .ephemeral(true),
-        )
-        .await?;
-
+    let Some(session) = super::active_session(ctx, "Cannot change repeat").await? else {
         return Ok(());
     };
 

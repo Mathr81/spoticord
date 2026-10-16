@@ -116,18 +116,23 @@ pub async fn join(ctx: Context<'_>) -> Result<()> {
         }
     }
 
-    // Prevent the user from using Spoticord simultaneously in multiple servers
-    if let Some(session) = manager.get_session(SessionQuery::Owner(ctx.author().id)) {
+    // The bot plays from a single Spotify account, so only one server may play at a time:
+    // two devices on one account would keep stealing playback from each other.
+    for session in manager.get_all_sessions() {
+        if session.guild() == guild.id || !session.active().await.unwrap_or(false) {
+            continue;
+        }
+
         let server_name = session.guild().to_partial_guild(&ctx).await?.name;
 
         ctx.send(
             CreateReply::default()
                 .embed(
                     CreateEmbed::new()
-                        .title("You are already using Spoticord")
+                        .title("Spoticord is busy")
                         .description(format!(
-                            "You are already using Spoticord in `{}`\n\n\
-                            Stop playing in that server first before starting a new session.",
+                            "Spoticord is already playing in `{}`\n\n\
+                            Stop playback there first (`/stop` or `/disconnect`) before starting a new session.",
                             spoticord_utils::discord::escape(server_name)
                         ))
                         .color(Colors::Error),

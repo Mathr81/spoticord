@@ -6,7 +6,7 @@ pub mod playback_embed;
 use error::Error;
 use error::Result;
 use librespot::core::error::ErrorKind;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use lyrics_embed::LyricsEmbed;
 use manager::{SessionManager, SessionQuery};
 use playback_embed::{PlaybackEmbed, PlaybackEmbedHandle};
@@ -288,6 +288,30 @@ impl Session {
             PlayerEvent::Stopped => self.shutdown_player().await,
             PlayerEvent::TrackChanged(_) => {}
             PlayerEvent::ConnectionReset => {
+                // Try once to bring the Spotify connection back before giving up
+                self.player.shutdown().await;
+                self.active = false;
+
+                if self.reactivate(self.owner).await.is_ok() {
+                    info!("Reconnected to Spotify after a connection reset");
+                    self.start_timeout();
+
+                    _ = self
+                        .text_channel
+                        .send_message(
+                            &self.context,
+                            CreateMessage::new().embed(
+                                CreateEmbed::new()
+                                    .title("Spotify connection restored")
+                                    .description("The connection to Spotify dropped and has been re-established.\nSelect the bot in Spotify again to resume playback.")
+                                    .color(Colors::Warning),
+                            ),
+                        )
+                        .await;
+
+                    return;
+                }
+
                 self.disconnect().await;
 
                 _ = self
@@ -326,7 +350,7 @@ impl Session {
 
         tokio::spawn(async move {
             let mut timer =
-                tokio::time::interval(Duration::from_secs(spoticord_config::DISCONNECT_TIME));
+                tokio::time::interval(Duration::from_secs(spoticord_config::disconnect_time()));
 
             // Ignore immediate tick
             timer.tick().await;
@@ -384,10 +408,6 @@ impl Session {
         self.start_timeout();
 
         self.active = false;
-
-        // Remove owner from session manager
-        self.session_manager
-            .remove_session(SessionQuery::Owner(self.owner));
     }
 
     async fn disconnect(&mut self) {
@@ -422,10 +442,8 @@ impl Drop for Session {
 
         let session_manager = self.session_manager.clone();
         let guild_id = self.guild_id;
-        let owner = self.owner;
 
         session_manager.remove_session(SessionQuery::Guild(guild_id));
-        session_manager.remove_session(SessionQuery::Owner(owner));
     }
 }
 
@@ -552,8 +570,6 @@ impl SessionHandle {
     ///
     /// This is meant to be used for when the session owner leaves the call
     /// and allows other users to become owner using the `/join` command.
-    ///
-    /// This should also remove the owner from the session manager.
     pub async fn shutdown_player(&self) {
         if let Err(why) = self.commands.send(SessionCommand::ShutdownPlayer).await {
             error!("Failed to send command: {why}");
@@ -562,7 +578,7 @@ impl SessionHandle {
 
     /// Instruct the session to destroy itself.
     ///
-    /// This should also remove the player and the owner from the session manager.
+    /// This should also remove the session from the session manager.
     pub async fn disconnect(&self) {
         if let Err(why) = self.commands.send(SessionCommand::Disconnect).await {
             error!("Failed to send command: {why}");

@@ -7,7 +7,6 @@ use serenity::all::{
     CreateInteractionResponseFollowup, EditMessage,
 };
 use serenity::futures::StreamExt;
-use spoticord_session::manager::SessionQuery;
 use spoticord_utils::discord::Colors;
 
 use super::browse;
@@ -20,23 +19,10 @@ pub async fn queue(
     #[description = "A track to search for and add to the queue"] query: Option<String>,
 ) -> Result<()> {
     let manager = ctx.data();
-    let guild = ctx.guild_id().expect("poise lied to me");
 
-    if manager.get_session(SessionQuery::Guild(guild)).is_none() {
-        ctx.send(
-            CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("Cannot access the queue")
-                        .description("I'm currently not playing any music in this server.\nUse `/join` first.")
-                        .color(Colors::Error),
-                )
-                .ephemeral(true),
-        )
-        .await?;
-
+    let Some(session) = super::active_session(ctx, "Cannot access the queue").await? else {
         return Ok(());
-    }
+    };
 
     let Some(spotify) = manager.spotify() else {
         ctx.send(
@@ -50,6 +36,8 @@ pub async fn queue(
     };
 
     ctx.defer().await?;
+
+    let player = session.player().await?;
 
     let Some(query) = query else {
         // No query: just display the current queue.
@@ -159,7 +147,7 @@ pub async fn queue(
             )
             .await;
 
-        let content = match spotify.add_to_queue(&track.uri).await {
+        let content = match spotify.add_to_queue(&track.uri, player.device_id()).await {
             Ok(()) => format!(
                 "➕ Added **{}** — {} to the queue",
                 track.name, track.artists

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use librespot::core::SpotifyUri;
 use log::{error, trace};
 use poise::ChoiceParameter;
 use serenity::{
@@ -10,9 +11,10 @@ use serenity::{
     },
     futures::StreamExt,
 };
-use spoticord_player::{info::PlaybackInfo, PlayerHandle, PlayerState, RepeatMode, DEFAULT_VOLUME};
+use spoticord_player::{info::PlaybackInfo, PlayerHandle, PlayerState, RepeatMode};
+use spoticord_spotify::WebApi;
 use spoticord_utils::discord::Colors;
-use std::{ops::ControlFlow, time::Duration};
+use std::{ops::ControlFlow, sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::Instant};
 
 use crate::{Session, SessionHandle};
@@ -58,11 +60,19 @@ pub struct PlaybackEmbed {
     /// When set, render the full "dashboard" layout (extra controls + volume).
     full: bool,
 
+    /// Web API client used to show the next track, if a Spotify app is configured.
+    spotify: Option<Arc<WebApi>>,
+    /// The "up next" line, cached per track to avoid querying the Web API on every refresh.
+    up_next: Option<(SpotifyUri, Option<String>)>,
+
     rx: mpsc::Receiver<Command>,
 }
 
 /// Amount a single volume button press changes the volume by (~10% of the range).
 const VOLUME_STEP: u16 = u16::MAX / 10;
+
+/// How far the rewind / fast-forward buttons jump.
+const SEEK_STEP_MS: u32 = 15_000;
 
 impl PlaybackEmbed {
     pub async fn create(
@@ -102,7 +112,7 @@ impl PlaybackEmbed {
                 &ctx,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .embed(build_embed(&playback_info, &owner, state.as_ref()))
+                        .embed(build_embed(&playback_info, &owner, state.as_ref(), None))
                         .components(build_components(
                             ctx_id,
                             playback_info.playing(),
@@ -135,6 +145,8 @@ impl PlaybackEmbed {
             force_edit: false,
             update_behavior,
             full,
+            spotify: session.session_manager.spotify(),
+            up_next: None,
             rx,
         };
 
@@ -229,7 +241,7 @@ impl PlaybackEmbed {
     async fn handle_press(&self, press: ComponentInteraction) {
         trace!("Received button press: {press:?}");
 
-        let Ok((player, playback_info, owner)) = self.get_info().await else {
+        let Ok((player, playback_info)) = self.get_info().await else {
             _ = press
                 .create_followup(
                     &self.ctx,
@@ -246,26 +258,20 @@ impl PlaybackEmbed {
             return;
         };
 
-        if press.user.id != owner.id {
-            _ = press
-                .create_followup(
-                    &self.ctx,
-                    CreateInteractionResponseFollowup::new()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("Cannot perform action")
-                                .description("Only the host may use the media buttons"),
-                        )
-                        .ephemeral(true),
-                )
-                .await;
-
-            return;
-        }
-
         match press.data.custom_id.split('-').next_back() {
             Some("next") => player.next_track().await,
             Some("prev") => player.previous_track().await,
+            Some("back") => {
+                let position = playback_info
+                    .current_position()
+                    .saturating_sub(SEEK_STEP_MS);
+                player.seek(position).await;
+            }
+            Some("fwd") => {
+                let position =
+                    (playback_info.current_position() + SEEK_STEP_MS).min(playback_info.duration());
+                player.seek(position).await;
+            }
             Some("pause") => {
                 if playback_info.playing() {
                     player.pause().await
@@ -308,7 +314,7 @@ impl PlaybackEmbed {
                     .state()
                     .await
                     .map(|state| state.volume)
-                    .unwrap_or(DEFAULT_VOLUME);
+                    .unwrap_or_else(|_| spoticord_config::default_volume());
                 let volume = if action == "volup" {
                     current.saturating_add(VOLUME_STEP)
                 } else {
@@ -345,15 +351,14 @@ impl PlaybackEmbed {
         acknowledge(&self.ctx, &press).await;
     }
 
-    async fn get_info(&self) -> Result<(PlayerHandle, PlaybackInfo, User)> {
+    async fn get_info(&self) -> Result<(PlayerHandle, PlaybackInfo)> {
         let player = self.session.player().await?;
-        let owner = self.session.owner().await?.to_user(&self.ctx).await?;
         let playback_info = player
             .playback_info()
             .await?
             .ok_or_else(|| anyhow!("No playback info present"))?;
 
-        Ok((player, playback_info, owner))
+        Ok((player, playback_info))
     }
 
     async fn update_embed(&mut self, force_edit: bool) -> ControlFlow<(), ()> {
@@ -392,6 +397,8 @@ impl PlaybackEmbed {
             None
         };
 
+        let up_next = self.up_next(&playback_info).await;
+
         let should_pin = !force_edit && self.update_behavior.is_pinned();
 
         if should_pin {
@@ -403,7 +410,12 @@ impl PlaybackEmbed {
                 .send_message(
                     &self.ctx,
                     CreateMessage::new()
-                        .embed(build_embed(&playback_info, &owner, state.as_ref()))
+                        .embed(build_embed(
+                            &playback_info,
+                            &owner,
+                            state.as_ref(),
+                            up_next.as_deref(),
+                        ))
                         .components(build_components(
                             self.id,
                             playback_info.playing(),
@@ -424,7 +436,12 @@ impl PlaybackEmbed {
             .edit(
                 &self.ctx,
                 EditMessage::new()
-                    .embed(build_embed(&playback_info, &owner, state.as_ref()))
+                    .embed(build_embed(
+                        &playback_info,
+                        &owner,
+                        state.as_ref(),
+                        up_next.as_deref(),
+                    ))
                     .components(build_components(
                         self.id,
                         playback_info.playing(),
@@ -441,6 +458,31 @@ impl PlaybackEmbed {
         self.last_update = Instant::now();
 
         ControlFlow::Continue(())
+    }
+
+    /// The next track in the queue, refreshed only when the current track changes.
+    ///
+    /// shortcut: tracks queued mid-song only show up after the next track change; re-fetch on a timer if that matters.
+    async fn up_next(&mut self, playback_info: &PlaybackInfo) -> Option<String> {
+        let spotify = self.spotify.as_ref()?;
+        let uri = playback_info.uri();
+
+        if !matches!(&self.up_next, Some((cached, _)) if *cached == uri) {
+            let next = match spotify.get_queue().await {
+                Ok(queue) => queue
+                    .into_iter()
+                    .next()
+                    .map(|track| format!("{} — {}", track.name, track.artists)),
+                Err(why) => {
+                    trace!("Failed to fetch the queue for the embed: {why}");
+                    None
+                }
+            };
+
+            self.up_next = Some((uri, next));
+        }
+
+        self.up_next.as_ref()?.1.clone()
     }
 
     async fn update_not_playing(&mut self) -> Result<()> {
@@ -581,6 +623,7 @@ fn build_embed(
     playback_info: &PlaybackInfo,
     owner: &User,
     state: Option<&PlayerState>,
+    up_next: Option<&str>,
 ) -> CreateEmbed {
     let mut description = String::new();
 
@@ -617,6 +660,10 @@ fn build_embed(
         playback_info.playing(),
     );
 
+    if let Some(up_next) = up_next {
+        description += &format!("\n\n⏭️ Up next: {up_next}");
+    }
+
     // Dashboard-only volume readout (shuffle/repeat are shown via button colour).
     if let Some(state) = state {
         let percent = u32::from(state.volume) * 100 / u32::from(u16::MAX);
@@ -629,10 +676,15 @@ fn build_embed(
         "Now Playing"
     };
 
-    CreateEmbed::new()
+    let mut embed = CreateEmbed::new()
         .author(CreateEmbedAuthor::new(title).icon_url("https://spoticord.com/spotify-logo.png"))
-        .description(description)
-        .thumbnail(playback_info.thumbnail())
+        .description(description);
+
+    if let Some(thumbnail) = playback_info.thumbnail() {
+        embed = embed.thumbnail(thumbnail);
+    }
+
+    embed
         .footer(
             CreateEmbedFooter::new(owner.global_name.as_ref().unwrap_or(&owner.name))
                 .icon_url(owner.face()),
@@ -663,7 +715,21 @@ fn build_components(id: u64, playing: bool, state: Option<&PlayerState>) -> Vec<
             "▶️ Play"
         });
 
-    let media_row = CreateActionRow::Buttons(vec![prev_button, pause_button, next_button]);
+    let back_button = CreateButton::new(format!("{id}-back"))
+        .style(ButtonStyle::Secondary)
+        .label("⏪ 15s");
+
+    let fwd_button = CreateButton::new(format!("{id}-fwd"))
+        .style(ButtonStyle::Secondary)
+        .label("15s ⏩");
+
+    let media_row = CreateActionRow::Buttons(vec![
+        back_button,
+        prev_button,
+        pause_button,
+        next_button,
+        fwd_button,
+    ]);
 
     let Some(state) = state else {
         return vec![media_row];

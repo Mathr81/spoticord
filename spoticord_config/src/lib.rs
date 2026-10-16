@@ -11,9 +11,6 @@ pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-dev");
 /// The "listening to" message that shows up under the Spoticord bot user
 pub const MOTD: &str = "some good 'ol music";
 
-/// The time it takes (in seconds) for Spoticord to disconnect when no music is being played
-pub const DISCONNECT_TIME: u64 = 5 * 60;
-
 pub fn discord_token() -> &'static str {
     &env::DISCORD_TOKEN
 }
@@ -45,4 +42,14 @@ pub fn spotify_client_secret() -> Option<&'static str> {
 /// The redirect URI used for the one-time Web API authorization.
 pub fn spotify_redirect_uri() -> &'static str {
     &env::SPOTIFY_REDIRECT_URI
+}
+
+/// The time it takes (in seconds) for Spoticord to disconnect when no music is being played.
+pub fn disconnect_time() -> u64 {
+    *env::DISCONNECT_TIME
+}
+
+/// The initial playback volume, scaled to Spotify's `0..=u16::MAX` range.
+pub fn default_volume() -> u16 {
+    (u32::from(*env::DEFAULT_VOLUME) * u32::from(u16::MAX) / 100) as u16
 }

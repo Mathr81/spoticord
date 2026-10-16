@@ -6,7 +6,7 @@ use librespot::{
     connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc},
     core::{
         cache::Cache, error::ErrorKind, http_client::HttpClientError, Session as SpotifySession,
-        SessionConfig,
+        SessionConfig, SpotifyUri,
     },
     discovery::Credentials,
     metadata::Lyrics,
@@ -25,12 +25,9 @@ use spoticord_audio::{
 use std::{
     io::Write,
     sync::{atomic::AtomicBool, Arc},
+    time::Duration,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
-
-/// Default playback volume (75% of `u16::MAX`), matching the value handed to
-/// librespot's `ConnectConfig` when the player starts.
-pub const DEFAULT_VOLUME: u16 = 49151;
 
 /// Repeat mode, matching Spotify's three states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -65,8 +62,8 @@ impl RepeatMode {
 
 /// A snapshot of the controllable player state that isn't part of [`PlaybackInfo`].
 ///
-/// These values reflect the commands Spoticord has issued; they may drift if the
-/// same account is controlled from elsewhere (e.g. the Spotify app directly).
+/// Kept in sync with librespot's events, so changes made from the Spotify app are
+/// reflected too.
 #[derive(Debug, Clone, Copy)]
 pub struct PlayerState {
     pub volume: u16,
@@ -84,6 +81,7 @@ enum PlayerCommand {
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     PlayUri(String),
+    Seek(u32),
 
     GetPlaybackInfo(oneshot::Sender<Option<PlaybackInfo>>),
     GetState(oneshot::Sender<PlayerState>),
@@ -144,6 +142,10 @@ impl Player {
         // Free call lock before creating session
         drop(call_lock);
 
+        // Prefer the reusable credentials librespot saved to the cache: right after
+        // the first OAuth login we only hold an access token, which expires in an hour.
+        let credentials = cache.credentials().unwrap_or(credentials);
+
         // Create librespot audio streamer. Passing the cache lets librespot persist
         // the reusable credentials to disk, so we only need to authenticate once.
         let session = SpotifySession::new(SessionConfig::default(), Some(cache));
@@ -176,7 +178,7 @@ impl Player {
             match Spirc::new(
                 ConnectConfig {
                     name: device_name.clone(),
-                    initial_volume: DEFAULT_VOLUME,
+                    initial_volume: spoticord_config::default_volume(),
                     ..Default::default()
                 },
                 session.clone(),
@@ -203,6 +205,7 @@ impl Player {
                         return Err(why);
                     }
 
+                    tokio::time::sleep(Duration::from_secs(tries)).await;
                     continue;
                 }
             }
@@ -211,6 +214,7 @@ impl Player {
         // librespot persists the reusable credentials to the cache on connect, so
         // there is no auth data to hand back to the caller.
 
+        let device_id = session.device_id().to_owned();
         let shutdown = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel(16);
         let player = Self {
@@ -220,7 +224,7 @@ impl Player {
             stream,
 
             playback_info: None,
-            volume: DEFAULT_VOLUME,
+            volume: spoticord_config::default_volume(),
             shuffle: false,
             repeat: RepeatMode::Off,
 
@@ -244,7 +248,13 @@ impl Player {
         });
         tokio::spawn(player.run());
 
-        Ok((PlayerHandle { commands: tx }, event_rx))
+        Ok((
+            PlayerHandle {
+                commands: tx,
+                device_id,
+            },
+            event_rx,
+        ))
     }
 
     async fn run(mut self) {
@@ -309,15 +319,21 @@ impl Player {
             }
 
             PlayerCommand::PlayUri(uri) => {
-                let request = LoadRequest::from_tracks(
-                    vec![uri],
-                    LoadRequestOptions {
-                        start_playing: true,
-                        ..Default::default()
-                    },
-                );
+                let options = LoadRequestOptions {
+                    start_playing: true,
+                    ..Default::default()
+                };
+
+                // Albums, playlists, artists and shows play as a context; anything else as a single track
+                let request = match SpotifyUri::from_uri(&uri) {
+                    Ok(SpotifyUri::Track { .. } | SpotifyUri::Episode { .. }) | Err(_) => {
+                        LoadRequest::from_tracks(vec![uri], options)
+                    }
+                    Ok(_) => LoadRequest::from_context_uri(uri, options),
+                };
                 _ = self.spirc.load(request);
             }
+            PlayerCommand::Seek(position_ms) => _ = self.spirc.set_position_ms(position_ms),
 
             PlayerCommand::GetPlaybackInfo(tx) => _ = tx.send(self.playback_info.clone()),
             PlayerCommand::GetState(tx) => {
@@ -340,8 +356,10 @@ impl Player {
         match event {
             SpotifyPlayerEvent::PositionCorrection { position_ms, .. }
             | SpotifyPlayerEvent::Seeked { position_ms, .. } => {
+                // Seeking while paused stays paused
                 if let Some(playback_info) = self.playback_info.as_mut() {
-                    playback_info.update_playback(position_ms, true);
+                    let playing = playback_info.playing();
+                    playback_info.update_playback(position_ms, playing);
                 }
             }
             SpotifyPlayerEvent::Playing { position_ms, .. } => {
@@ -366,6 +384,15 @@ impl Player {
                 _ = self.events.send(PlayerEvent::Pause).await;
 
                 self.playback_info = None;
+            }
+            SpotifyPlayerEvent::VolumeChanged { volume } => self.volume = volume,
+            SpotifyPlayerEvent::ShuffleChanged { shuffle } => self.shuffle = shuffle,
+            SpotifyPlayerEvent::RepeatChanged { context, track } => {
+                self.repeat = match (track, context) {
+                    (true, _) => RepeatMode::Track,
+                    (false, true) => RepeatMode::Context,
+                    (false, false) => RepeatMode::Off,
+                };
             }
             SpotifyPlayerEvent::TrackChanged { audio_item } => {
                 if let Some(playback_info) = self.playback_info.as_mut() {
@@ -397,12 +424,13 @@ impl Player {
     ///
     /// This might return None if nothing is being played, or the current song does not have any lyrics.
     async fn get_lyrics(&self, tx: oneshot::Sender<Option<Lyrics>>) {
-        let Some(playback_info) = &self.playback_info else {
+        // Only Spotify-hosted tracks have lyrics (not episodes or local files)
+        let Some(SpotifyUri::Track { id }) = self.playback_info.as_ref().map(|p| p.uri()) else {
             _ = tx.send(None);
             return;
         };
 
-        let lyrics = match Lyrics::get(&self.session, &playback_info.track_id()).await {
+        let lyrics = match Lyrics::get(&self.session, &id).await {
             Ok(lyrics) => lyrics,
             Err(why) => {
                 // Ignore 404 errors
@@ -483,11 +511,17 @@ impl Drop for Player {
 #[derive(Clone, Debug)]
 pub struct PlayerHandle {
     commands: mpsc::Sender<PlayerCommand>,
+    device_id: String,
 }
 
 impl PlayerHandle {
     pub fn is_valid(&self) -> bool {
         !self.commands.is_closed()
+    }
+
+    /// The Spotify Connect device id of this player.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
     }
 
     pub async fn next_track(&self) {
@@ -521,9 +555,14 @@ impl PlayerHandle {
         _ = self.commands.send(PlayerCommand::SetRepeat(mode)).await;
     }
 
-    /// Immediately start playing a track by its `spotify:track:...` URI.
+    /// Immediately start playing a Spotify URI: a track, episode, album, playlist, artist or show.
     pub async fn play_uri(&self, uri: impl Into<String>) {
         _ = self.commands.send(PlayerCommand::PlayUri(uri.into())).await;
+    }
+
+    /// Seek to a position (in milliseconds) in the current track.
+    pub async fn seek(&self, position_ms: u32) {
+        _ = self.commands.send(PlayerCommand::Seek(position_ms)).await;
     }
 
     pub async fn playback_info(&self) -> Result<Option<PlaybackInfo>> {
