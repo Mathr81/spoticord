@@ -25,12 +25,10 @@ pub struct SessionManager {
     spotify: Option<Arc<WebApi>>,
 
     sessions: Arc<Mutex<HashMap<GuildId, SessionHandle>>>,
-    owners: Arc<Mutex<HashMap<UserId, SessionHandle>>>,
 }
 
 pub enum SessionQuery {
     Guild(GuildId),
-    Owner(UserId),
 }
 
 impl SessionManager {
@@ -51,7 +49,6 @@ impl SessionManager {
             spotify,
 
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            owners: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -77,10 +74,6 @@ impl SessionManager {
             .lock()
             .expect("mutex poisoned")
             .insert(guild_id, handle.clone());
-        self.owners
-            .lock()
-            .expect("mutex poisoned")
-            .insert(owner, handle.clone());
 
         Ok(handle)
     }
@@ -93,12 +86,6 @@ impl SessionManager {
                 .expect("mutex poisoned")
                 .get(&guild)
                 .cloned(),
-            SessionQuery::Owner(owner) => self
-                .owners
-                .lock()
-                .expect("mutex poisoned")
-                .get(&owner)
-                .cloned(),
         }
     }
 
@@ -106,9 +93,6 @@ impl SessionManager {
         match query {
             SessionQuery::Guild(guild) => {
                 self.sessions.lock().expect("mutex poisoned").remove(&guild)
-            }
-            SessionQuery::Owner(owner) => {
-                self.owners.lock().expect("mutex poisoned").remove(&owner)
             }
         };
     }
@@ -133,7 +117,6 @@ impl SessionManager {
             session.disconnect().await;
         }
 
-        self.owners.lock().expect("mutex poisoned").clear();
         self.sessions.lock().expect("mutex poisoned").clear();
     }
 

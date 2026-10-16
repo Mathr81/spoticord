@@ -34,3 +34,20 @@ pub static SPOTIFY_REDIRECT_URI: LazyLock<String> = LazyLock::new(|| {
     std::env::var("SPOTIFY_REDIRECT_URI")
         .unwrap_or_else(|_| "http://127.0.0.1:8898/callback".to_string())
 });
+
+/// Initial playback volume, as a percentage (0-100). Defaults to 75.
+pub static DEFAULT_VOLUME: LazyLock<u8> = LazyLock::new(|| {
+    std::env::var("DEFAULT_VOLUME")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+        .map(|v| v.min(100))
+        .unwrap_or(75)
+});
+
+/// Seconds of inactivity before the bot leaves the voice channel. Defaults to 300.
+pub static DISCONNECT_TIME: LazyLock<u64> = LazyLock::new(|| {
+    std::env::var("DISCONNECT_TIME")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5 * 60)
+});

@@ -92,3 +92,54 @@ pub fn queue_embed(tracks: &[TrackResult]) -> CreateEmbed {
         .description(description)
         .color(Colors::Info)
 }
+
+/// Turn a Spotify link (`https://open.spotify.com/album/...`) or URI
+/// (`spotify:album:...`) into a playable URI. Returns `None` for plain search text.
+pub fn spotify_uri(query: &str) -> Option<String> {
+    const KINDS: &[&str] = &["track", "album", "playlist", "artist", "episode", "show"];
+
+    let query = query.trim();
+
+    let (kind, id) = if let Some(rest) = query.strip_prefix("spotify:") {
+        rest.split_once(':')?
+    } else {
+        let path = query
+            .strip_prefix("https://open.spotify.com/")
+            .or_else(|| query.strip_prefix("http://open.spotify.com/"))?;
+        let path = path.split(['?', '#']).next()?;
+        let mut parts = path.split('/').filter(|part| !part.starts_with("intl-"));
+        (parts.next()?, parts.next()?)
+    };
+
+    let valid_id = id.len() == 22 && id.chars().all(|c| c.is_ascii_alphanumeric());
+
+    (KINDS.contains(&kind) && valid_id).then(|| format!("spotify:{kind}:{id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spotify_uri;
+
+    #[test]
+    fn parses_links_and_uris() {
+        let id = "4uLU6hMCjMI75M1A2tKUQC";
+        let uri = |kind: &str| Some(format!("spotify:{kind}:{id}"));
+
+        assert_eq!(spotify_uri(&format!("spotify:track:{id}")), uri("track"));
+        assert_eq!(
+            spotify_uri(&format!("https://open.spotify.com/album/{id}?si=abc")),
+            uri("album")
+        );
+        assert_eq!(
+            spotify_uri(&format!("https://open.spotify.com/intl-fr/playlist/{id}")),
+            uri("playlist")
+        );
+        assert_eq!(
+            spotify_uri(&format!(" https://open.spotify.com/episode/{id} ")),
+            uri("episode")
+        );
+        assert_eq!(spotify_uri("never gonna give you up"), None);
+        assert_eq!(spotify_uri("https://open.spotify.com/user/someone"), None);
+        assert_eq!(spotify_uri("spotify:track:short"), None);
+    }
+}

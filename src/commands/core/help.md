@@ -17,8 +17,12 @@ This is because Spoticord does not support Spotify Free "features" (ads, limited
 **[Click here](https://spoticord.com/#how-to)** for a quick overview about how to set up Spoticord, and some basic usage tips.
 
 **What commands can I use?**
-For a list of commands, you can check out [the commands section](https://spoticord.com/#commands) on the website.
-You can also just type `/` in a text chat and Discord will automatically show you all available commands.
+`/join` · `/disconnect` · `/stop` — bring the bot in, out, or stop playback
+`/play` — search, or paste a Spotify link (track, album, playlist, artist, podcast)
+`/queue` — show the queue or add a track · `/seek` — jump to a position
+`/playing` · `/dashboard` — now-playing card with controls · `/lyrics`
+`/volume` · `/shuffle` · `/repeat` · `/jam` — share a Jam link
+_`/jam` relies on an unofficial Spotify API and may stop working without notice._
 
 **Still stuck on something?**
 If you still need some help, feel free to join the **[Spoticord Discord Server](https://discord.gg/wRCyhVqBZ5)**.

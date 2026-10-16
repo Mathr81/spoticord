@@ -1,7 +1,6 @@
 use anyhow::Result;
 use poise::CreateReply;
 use serenity::all::CreateEmbed;
-use spoticord_session::manager::SessionQuery;
 use spoticord_utils::discord::Colors;
 
 use crate::bot::Context;
@@ -15,22 +14,7 @@ pub async fn volume(
     #[max = 100]
     volume: u8,
 ) -> Result<()> {
-    let manager = ctx.data();
-    let guild = ctx.guild_id().expect("poise lied to me");
-
-    let Some(session) = manager.get_session(SessionQuery::Guild(guild)) else {
-        ctx.send(
-            CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("Cannot change volume")
-                        .description("I'm currently not playing any music in this server.")
-                        .color(Colors::Error),
-                )
-                .ephemeral(true),
-        )
-        .await?;
-
+    let Some(session) = super::active_session(ctx, "Cannot change volume").await? else {
         return Ok(());
     };
 

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use librespot::{
-    core::{SpotifyId, SpotifyUri},
+    core::SpotifyUri,
     metadata::{
         artist::ArtistsWithRole,
         audio::{AudioItem, UniqueFields},
@@ -28,16 +28,9 @@ impl PlaybackInfo {
         }
     }
 
-    pub fn track_id(&self) -> SpotifyId {
-        match &self.audio_item.track_id {
-            SpotifyUri::Album { id }
-            | SpotifyUri::Artist { id }
-            | SpotifyUri::Episode { id }
-            | SpotifyUri::Playlist { id, .. }
-            | SpotifyUri::Show { id }
-            | SpotifyUri::Track { id } => *id,
-            SpotifyUri::Local { .. } | SpotifyUri::Unknown { .. } => SpotifyId { id: 0 },
-        }
+    /// The URI of the current item. Unlike a bare id, this also tells local files apart.
+    pub fn uri(&self) -> SpotifyUri {
+        self.audio_item.track_id.clone()
     }
 
     pub fn track_id_string(&self) -> String {
@@ -78,13 +71,12 @@ impl PlaybackInfo {
         }
     }
 
-    pub fn thumbnail(&self) -> String {
+    /// The cover image, if any (local files and some episodes have none).
+    pub fn thumbnail(&self) -> Option<String> {
         self.audio_item
             .covers
             .first()
-            .expect("spotify track missing cover image")
-            .url
-            .to_string()
+            .map(|cover| cover.url.clone())
     }
 
     pub fn duration(&self) -> u32 {

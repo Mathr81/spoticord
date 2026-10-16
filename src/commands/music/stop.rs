@@ -27,22 +27,6 @@ pub async fn stop(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     };
 
-    if session.active().await? && session.owner().await? != ctx.author().id {
-        ctx.send(
-            CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("Cannot stop playback")
-                        .description("Only the host may stop playback.")
-                        .color(Colors::Error),
-                )
-                .ephemeral(true),
-        )
-        .await?;
-
-        return Ok(());
-    }
-
     session.shutdown_player().await;
 
     ctx.send(

@@ -6,36 +6,39 @@ use serenity::all::{
     ComponentInteractionCollector, CreateEmbed, CreateInteractionResponse, EditMessage,
 };
 use serenity::futures::StreamExt;
-use spoticord_session::manager::SessionQuery;
 use spoticord_utils::discord::Colors;
 
 use super::browse;
 use crate::bot::Context;
 
-/// Search Spotify and play a track
+/// Search Spotify and play a track, or play a Spotify link (track, album, playlist...)
 #[poise::command(slash_command, guild_only)]
 pub async fn play(
     ctx: Context<'_>,
-    #[description = "What to search for"] query: String,
+    #[description = "What to search for, or a Spotify link"] query: String,
 ) -> Result<()> {
     let manager = ctx.data();
-    let guild = ctx.guild_id().expect("poise lied to me");
 
-    let Some(session) = manager.get_session(SessionQuery::Guild(guild)) else {
+    let Some(session) = super::active_session(ctx, "Cannot play").await? else {
+        return Ok(());
+    };
+
+    // A pasted link plays right away, no search (or Spotify app) needed
+    if let Some(uri) = browse::spotify_uri(&query) {
+        session.player().await?.play_uri(uri).await;
+
         ctx.send(
-            CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("Cannot play")
-                        .description("I'm currently not playing any music in this server.\nUse `/join` first.")
-                        .color(Colors::Error),
-                )
-                .ephemeral(true),
+            CreateReply::default().embed(
+                CreateEmbed::new()
+                    .title("▶️ Now playing")
+                    .description(query.trim())
+                    .color(Colors::Info),
+            ),
         )
         .await?;
 
         return Ok(());
-    };
+    }
 
     let Some(spotify) = manager.spotify() else {
         ctx.send(

@@ -2,7 +2,7 @@ use std::{ops::ControlFlow, time::Duration};
 
 use anyhow::Result;
 use librespot::{
-    core::SpotifyId,
+    core::SpotifyUri,
     metadata::{
         lyrics::{Line, SyncType},
         Lyrics,
@@ -31,7 +31,7 @@ pub struct LyricsEmbed {
     ctx: Context,
     session: SessionHandle,
     message: Message,
-    track: SpotifyId,
+    track: SpotifyUri,
 
     lyrics: Option<Lyrics>,
     page: usize,
@@ -83,7 +83,7 @@ impl LyricsEmbed {
             ctx: ctx.clone(),
             session: handle,
             message,
-            track: playback_info.track_id(),
+            track: playback_info.uri(),
 
             lyrics,
             page: 0,
@@ -149,7 +149,7 @@ impl LyricsEmbed {
             return ControlFlow::Continue(());
         };
 
-        if playback_info.track_id() != self.track {
+        if playback_info.uri() != self.track {
             // We're playing another track, reload the lyrics!
 
             let lyrics = match player.get_lyrics().await {
@@ -163,7 +163,7 @@ impl LyricsEmbed {
 
             self.lyrics = lyrics;
             self.page = 0;
-            self.track = playback_info.track_id();
+            self.track = playback_info.uri();
 
             if let Err(why) = self
                 .message

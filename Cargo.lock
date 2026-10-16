@@ -4509,6 +4509,7 @@ dependencies = [
  "serde_json",
  "songbird",
  "spoticord_audio",
+ "spoticord_config",
  "spoticord_utils",
  "symphonia",
  "tokio",

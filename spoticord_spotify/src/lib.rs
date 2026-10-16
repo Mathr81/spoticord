@@ -136,11 +136,15 @@ impl WebApi {
         Ok(items.iter().filter_map(parse_track).collect())
     }
 
-    /// Add a track to the play queue by its `spotify:track:...` URI.
-    pub async fn add_to_queue(&self, uri: &str) -> Result<()> {
+    /// Add a track (by its `spotify:track:...` URI) to the queue of the given device.
+    ///
+    /// Without a device id Spotify picks the account's active device, which may be a
+    /// phone rather than the bot.
+    pub async fn add_to_queue(&self, uri: &str, device_id: &str) -> Result<()> {
         let url = format!(
-            "{API_BASE}/me/player/queue?uri={}",
-            urlencoding::encode(uri)
+            "{API_BASE}/me/player/queue?uri={}&device_id={}",
+            urlencoding::encode(uri),
+            urlencoding::encode(device_id)
         );
 
         self.request_json(Method::POST, &url).await?;
@@ -215,20 +219,22 @@ async fn authorize(client_id: &str, redirect_uri: &str) -> Result<String> {
         urlencoding::encode(SCOPES),
     );
 
-    let port = Url::parse(redirect_uri)
-        .ok()
-        .and_then(|parsed| parsed.port())
+    let parsed = Url::parse(redirect_uri).context("SPOTIFY_REDIRECT_URI is not a valid URL")?;
+    let port = parsed
+        .port()
         .ok_or_else(|| anyhow!("SPOTIFY_REDIRECT_URI must include a port, e.g. :8898"))?;
+    // Listen only where the redirect points (usually 127.0.0.1), not on every interface
+    let host = parsed.host_str().unwrap_or("127.0.0.1").to_owned();
 
     warn!("Open this URL in a browser to authorize Spotify Web API access (search / queue):");
     warn!("{url}");
 
-    wait_for_code(port).await
+    wait_for_code(&host, port).await
 }
 
 /// Accept a single request on the redirect port and extract the `code`.
-async fn wait_for_code(port: u16) -> Result<String> {
-    let listener = TcpListener::bind(("0.0.0.0", port))
+async fn wait_for_code(host: &str, port: u16) -> Result<String> {
+    let listener = TcpListener::bind((host, port))
         .await
         .with_context(|| format!("failed to bind the redirect port {port}"))?;
 
